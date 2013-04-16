@@ -184,8 +184,9 @@ machine(L3Cache, "MESIF Directory L3 Cache CMP")
 
   void addSharer(Address addr, MachineID requestor, Entry cache_entry) {
     assert(is_valid(cache_entry));
-    DPRINTF(RubySlicc, "machineID: %s, requestor: %s, address: %s\n",
+    DPRINTF(RubySlicc, "Adding sharer: machineID: %s, requestor: %s, address: %s\n",
             machineID, requestor, addr);
+    assert(machineIDToMachineType(requestor) == MachineType:L2Cache || machineIDToMachineType(requestor) == MachineType:L3Cache);
     cache_entry.Sharers.add(requestor);
   }
 
@@ -360,9 +361,11 @@ machine(L3Cache, "MESIF Directory L3 Cache CMP")
         Entry cache_entry := getCacheEntry(in_msg.Address);
         TBE tbe := L3_TBEs[in_msg.Address];
 
-        DPRINTF(RubySlicc, "Incoming request from L2: Addr: %s State: %s Req: %s Type: %s Dest: %s\n",
+        DPRINTF(RubySlicc, "Incoming request from L2: Addr: %s State: %s Req: %s Type: %s Dest: %s %s\n",
                 in_msg.Address, getState(tbe, cache_entry, in_msg.Address),
-                in_msg.Requestor, in_msg.Type, in_msg.Destination);
+                in_msg.Requestor, in_msg.Type, in_msg.Destination, in_msg.Requestor);
+
+	
 
         assert(machineIDToMachineType(in_msg.Requestor) == MachineType:L2Cache);
         assert(in_msg.Destination.isElement(machineID));
@@ -563,6 +566,7 @@ machine(L3Cache, "MESIF Directory L3 Cache CMP")
 
   action(f_sendInvToSharers, "f", desc="invalidate sharers for L3 replacement") {
     enqueue(L2RequestIntraChipL3Network_out, RequestMsg, latency=to_l3_latency) {
+      DPRINTF(RubySlicc, "Sending INV to %s\n", cache_entry.Sharers);
       assert(is_valid(cache_entry));
       out_msg.Address := address;
       out_msg.Type := CoherenceRequestType:INV;
@@ -575,6 +579,7 @@ machine(L3Cache, "MESIF Directory L3 Cache CMP")
   action(fw_sendFwdInvToSharers, "fw", desc="invalidate sharers for request") {
     peek(L2RequestIntraChipL3Network_in, RequestMsg) {
       enqueue(L2RequestIntraChipL3Network_out, RequestMsg, latency=to_l3_latency) {
+      DPRINTF(RubySlicc, "Sending INV to %s\n", cache_entry.Sharers);
         assert(is_valid(cache_entry));
         out_msg.Address := address;
         out_msg.Type := CoherenceRequestType:INV;
@@ -588,6 +593,7 @@ machine(L3Cache, "MESIF Directory L3 Cache CMP")
   action(fwm_sendFwdInvToSharersMinusRequestor, "fwm", desc="invalidate sharers for request, requestor is sharer") {
     peek(L2RequestIntraChipL3Network_in, RequestMsg) {
       enqueue(L2RequestIntraChipL3Network_out, RequestMsg, latency=to_l3_latency) {
+      DPRINTF(RubySlicc, "Sending INV to %s\n", cache_entry.Sharers);
         assert(is_valid(cache_entry));
         out_msg.Address := address;
         out_msg.Type := CoherenceRequestType:INV;
@@ -1016,7 +1022,7 @@ machine(L3Cache, "MESIF Directory L3 Cache CMP")
     rr_deallocateL3CacheBlock;
   }
 
-  transition(MT, L2_PUTX, M) {
+  transition(MT, L2_PUTX, M) { //L2 has evicted itself
     ll_clearSharers;
     mr_writeDataToCacheFromRequest;
     t_sendWBAck;

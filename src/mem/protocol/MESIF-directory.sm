@@ -205,7 +205,7 @@ machine(Directory, "MESI_CMP_filter_directory protocol")
           trigger(Event:DMA_WRITE, makeLineAddress(in_msg.Address),
                   TBEs[makeLineAddress(in_msg.Address)]);
         } else {
-          DPRINTF(RubySlicc, "%s\n", in_msg);
+          DPRINTF(RubySlicc, "Faulty message, DEAL WITH IT: %s\n", in_msg);
           error("Invalid message");
         }
       }

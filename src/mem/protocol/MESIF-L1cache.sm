@@ -73,7 +73,7 @@ machine(L1Cache, "MESIF Directory L1 Cache Multicore")
     Ifetch,          desc="I-fetch request from the home core";
     Store,           desc="Store request from the home core";
 
-    Inv,           desc="Invalidate request from L2 bank";
+    Inv,           desc="Invalidate request from L2";
 
     // internal generated request ??
     L1_Replacement,  desc="L1 Replacement", format="!r";
@@ -240,6 +240,8 @@ machine(L1Cache, "MESIF Directory L1 Cache Multicore")
       peek(responseIntraChipL1Network_in, ResponseMsg, block_on="Address") {
         assert(in_msg.Destination.isElement(machineID));
 
+	DPRINTF(RubySlicc, "Response to L1: %s\n", in_msg);
+
         Entry cache_entry := getCacheEntry(in_msg.Address);
         TBE tbe := L1_TBEs[in_msg.Address];
 
@@ -278,6 +280,8 @@ machine(L1Cache, "MESIF Directory L1 Cache Multicore")
     if(requestIntraChipL1Network_in.isReady()) {
       peek(requestIntraChipL1Network_in, RequestMsg, block_on="Address") {
         assert(in_msg.Destination.isElement(machineID));
+
+	DPRINTF(RubySlicc, "Request to L1: %s\n", in_msg);
 
         Entry cache_entry := getCacheEntry(in_msg.Address);
         TBE tbe := L1_TBEs[in_msg.Address];
@@ -712,7 +716,7 @@ machine(L1Cache, "MESIF Directory L1 Cache Multicore")
   }
 
   // Transitions from Idle
-  transition(I, L1_Replacement) {
+  transition(I, L1_Replacement) { //just frees memory?
     // Nothing would be sufficient, right?
     ff_deallocateL1CacheBlock;
   }
@@ -722,7 +726,7 @@ machine(L1Cache, "MESIF Directory L1 Cache Multicore")
     i_allocateTBE; // MSHR
     a_issueGETS; // What if hit?
     uu_profileDataMiss;
-    k_popMandatoryQueue; // we do this if something happened with data I guess
+    k_popMandatoryQueue;
   }
 
   transition(I, Ifetch, IS) {
@@ -743,7 +747,7 @@ machine(L1Cache, "MESIF Directory L1 Cache Multicore")
 
   transition(I, Inv) {
     fi_sendInvAck;
-    l_popRequestQueue; // Mandatory vs. Request?
+    l_popRequestQueue;
   }
 
   // Transitions from Shared
@@ -760,6 +764,7 @@ machine(L1Cache, "MESIF Directory L1 Cache Multicore")
   }
 
   transition(S, L1_Replacement, I) {
+//Silent!
     forward_eviction_to_cpu;
     ff_deallocateL1CacheBlock;
   }
@@ -784,7 +789,6 @@ machine(L1Cache, "MESIF Directory L1 Cache Multicore")
   }
 
   transition(E, L1_Replacement, M_I) {
-    // silent E replacement?? Will I need this?
     forward_eviction_to_cpu;
     i_allocateTBE;
     g_issuePUTX;   // send data, but hold in case forwarded request
@@ -792,7 +796,7 @@ machine(L1Cache, "MESIF Directory L1 Cache Multicore")
   }
 
   transition(E, Inv, I) {
-    // don't send data
+    // don't send data, not modified yet
     forward_eviction_to_cpu;
     fi_sendInvAck;
     l_popRequestQueue;
@@ -971,5 +975,10 @@ machine(L1Cache, "MESIF Directory L1 Cache Multicore")
     s_deallocateTBE;
     o_popIncomingResponseQueue;
     kd_wakeUpDependents;
+  }
+
+  //TODO remove, should not be here
+  transition(I, WB_Ack) {
+    o_popIncomingResponseQueue;
   }
 }
