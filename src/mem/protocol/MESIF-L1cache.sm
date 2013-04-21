@@ -249,7 +249,7 @@ machine(L1Cache, "MESIF Directory L1 Cache Multicore")
           trigger(Event:Data_Exclusive, in_msg.Address, cache_entry, tbe);
         } else if(in_msg.Type == CoherenceResponseType:DATA) {
           if ((getState(tbe, cache_entry, in_msg.Address) == State:IS ||
-               getState(tbe, cache_entry, in_msg.Address) == State:IS_I) &&
+               getState(tbe, cache_entry, in_msg.Address) == State:IS_I) && //this will never happen TODO!!!!!!!!!!!!!!!!!!!!!!!
               machineIDToMachineType(in_msg.Sender) == MachineType:L1Cache) {
 
               trigger(Event:DataS_fromL1, in_msg.Address, cache_entry, tbe);
@@ -340,7 +340,7 @@ machine(L1Cache, "MESIF Directory L1 Cache Multicore")
                       L1_TBEs[L1IcacheMemory.cacheProbe(in_msg.LineAddress)]);
             }
           }
-        } else {
+        } else { // TODO double check with MESI!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
 
           // *** DATA ACCESS *** ?? Same comments as above, why get it from L2? An assertion that data are in L2 should be enough
           Entry L1Dcache_entry := getL1DCacheEntry(in_msg.LineAddress);
@@ -375,7 +375,7 @@ machine(L1Cache, "MESIF Directory L1 Cache Multicore")
   }
 
   // ACTIONS
-  action(a_issueGETS, "a", desc="Issue GETS") { // Send GETS where ?? Is this directly called by CPU?
+  action(a_issueGETS, "a", desc="Issue GETS") {
     peek(mandatoryQueue_in, RubyRequest) {
       enqueue(requestIntraChipL1Network_out, RequestMsg, latency=l1_request_latency) { // Insert into queue, IntraChip
         out_msg.Address := address; // So message is an object! ?? This directly sends the request to other Node, and I don't want that.
@@ -403,7 +403,7 @@ machine(L1Cache, "MESIF Directory L1 Cache Multicore")
         DPRINTF(RubySlicc, "address: %s, destination: %s\n",
                 address, out_msg.Destination);
         out_msg.MessageSize := MessageSizeType:Control;
-        out_msg.Prefetch := in_msg.Prefetch;
+//        out_msg.Prefetch := in_msg.Prefetch;
         out_msg.AccessMode := in_msg.AccessMode;
       }
     }
@@ -445,20 +445,20 @@ machine(L1Cache, "MESIF Directory L1 Cache Multicore")
     }
   }
 
-  action(d_sendDataToRequestor, "d", desc="send data to requestor") { // ?? This should also be in L2 cache
-    peek(requestIntraChipL1Network_in, RequestMsg) {
-      enqueue(responseIntraChipL1Network_out, ResponseMsg, latency=l1_response_latency) {
-        assert(is_valid(cache_entry));
-        out_msg.Address := address;
-        out_msg.Type := CoherenceResponseType:DATA;
-        out_msg.DataBlk := cache_entry.DataBlk;
-        out_msg.Dirty := cache_entry.Dirty;
-        out_msg.Sender := machineID;
-        out_msg.Destination.add(in_msg.Requestor);
-        out_msg.MessageSize := MessageSizeType:Response_Data;
-      }
-    }
-  }
+//  action(d_sendDataToRequestor, "d", desc="send data to requestor") { // ?? This should also be in L2 cache
+//    peek(requestIntraChipL1Network_in, RequestMsg) {
+//      enqueue(responseIntraChipL1Network_out, ResponseMsg, latency=l1_response_latency) {
+//        assert(is_valid(cache_entry));
+//        out_msg.Address := address;
+//        out_msg.Type := CoherenceResponseType:DATA;
+//        out_msg.DataBlk := cache_entry.DataBlk;
+//        out_msg.Dirty := cache_entry.Dirty;
+//        out_msg.Sender := machineID;
+//        out_msg.Destination.add(in_msg.Requestor);
+//        out_msg.MessageSize := MessageSizeType:Response_Data;
+//      }
+//    }
+//  }
 
   action(d2_sendDataToL2, "d2", desc="send data to the L2 cache because of M downgrade") { // ?? This should stay
     enqueue(responseIntraChipL1Network_out, ResponseMsg, latency=l1_response_latency) {
@@ -474,20 +474,20 @@ machine(L1Cache, "MESIF Directory L1 Cache Multicore")
     }
   }
 
-  action(dt_sendDataToRequestor_fromTBE, "dt", desc="send data to requestor") { // ?? Again, move it to L2
-    peek(requestIntraChipL1Network_in, RequestMsg) {
-      enqueue(responseIntraChipL1Network_out, ResponseMsg, latency=l1_response_latency) {
-        assert(is_valid(tbe));
-        out_msg.Address := address;
-        out_msg.Type := CoherenceResponseType:DATA;
-        out_msg.DataBlk := tbe.DataBlk;
-        out_msg.Dirty := tbe.Dirty;
-        out_msg.Sender := machineID;
-        out_msg.Destination.add(in_msg.Requestor);
-        out_msg.MessageSize := MessageSizeType:Response_Data;
-      }
-    }
-  }
+//  action(dt_sendDataToRequestor_fromTBE, "dt", desc="send data to requestor") { // ?? Again, move it to L2
+//    peek(requestIntraChipL1Network_in, RequestMsg) {
+//      enqueue(responseIntraChipL1Network_out, ResponseMsg, latency=l1_response_latency) {
+//        assert(is_valid(tbe));
+//        out_msg.Address := address;
+//        out_msg.Type := CoherenceResponseType:DATA;
+//        out_msg.DataBlk := tbe.DataBlk;
+//      out_msg.Dirty := tbe.Dirty;
+//        out_msg.Sender := machineID;
+//        out_msg.Destination.add(in_msg.Requestor);
+//        out_msg.MessageSize := MessageSizeType:Response_Data;
+//      }
+//    }
+//  }
 
   action(d2t_sendDataToL2_fromTBE, "d2t", desc="send data to the L2 cache") { // This will stay
     enqueue(responseIntraChipL1Network_out, ResponseMsg, latency=l1_response_latency) {
@@ -503,17 +503,17 @@ machine(L1Cache, "MESIF Directory L1 Cache Multicore")
     }
   }
 
-  action(e_sendAckToRequestor, "e", desc="send invalidate ack to requestor (could be L2 or L1)") { // ?? Needed? Only L2 I guess
-    peek(requestIntraChipL1Network_in, RequestMsg) {
-      enqueue(responseIntraChipL1Network_out, ResponseMsg, latency=l1_response_latency) {
-        out_msg.Address := address;
-        out_msg.Type := CoherenceResponseType:ACK;
-        out_msg.Sender := machineID;
-        out_msg.Destination.add(in_msg.Requestor);
-        out_msg.MessageSize := MessageSizeType:Response_Control;
-      }
-    }
-  }
+//  action(e_sendAckToRequestor, "e", desc="send invalidate ack to requestor (could be L2 or L1)") { // ?? Needed? Only L2 I guess TODO was removed, not good!!!
+//    peek(requestIntraChipL1Network_in, RequestMsg) {
+//      enqueue(responseIntraChipL1Network_out, ResponseMsg, latency=l1_response_latency) {
+//        out_msg.Address := address;
+//        out_msg.Type := CoherenceResponseType:ACK;
+//        out_msg.Sender := machineID;
+//        out_msg.Destination.add(in_msg.Requestor);
+//        out_msg.MessageSize := MessageSizeType:Response_Control;
+//      }
+//    }
+//  }
 
   action(f_sendDataToL2, "f", desc="send data to the L2 cache") {
     enqueue(responseIntraChipL1Network_out, ResponseMsg, latency=l1_response_latency) {
@@ -529,7 +529,7 @@ machine(L1Cache, "MESIF Directory L1 Cache Multicore")
     }
   }
 
-  action(ft_sendDataToL2_fromTBE, "ft", desc="send data to the L2 cache") {
+  action(ft_sendWritebackDataToL2_fromTBE, "ft", desc="send data to the L2 cache") { //TODO one is writeback, one is normal, that is pure idiocy
     enqueue(responseIntraChipL1Network_out, ResponseMsg, latency=l1_response_latency) {
       assert(is_valid(tbe));
       out_msg.Address := address;
@@ -712,32 +712,33 @@ machine(L1Cache, "MESIF Directory L1 Cache Multicore")
 
   // Transitions for Load/Store/Replacement/WriteBack from transient states
   transition({IS, IM, IS_I, M_I, SM, SINK_WB_ACK}, {Load, Ifetch, Store, L1_Replacement}) {
+    // We cannot proceed
     z_stallAndWaitMandatoryQueue;
   }
 
   // Transitions from Idle
-  transition(I, L1_Replacement) { //just frees memory?
+  transition(I, L1_Replacement) { //just frees memory? Here is a weird thing, do we actually free this very block, or just any block?
     // Nothing would be sufficient, right?
     ff_deallocateL1CacheBlock;
   }
 
-  transition(I, Load, IS) {
+  transition(I, Load, IS) { // We didn't have the block, issue GETS request to L2
     oo_allocateL1DCacheBlock;
-    i_allocateTBE; // MSHR
-    a_issueGETS; // What if hit?
+    i_allocateTBE; // MSHR - why?
+    a_issueGETS; //
     uu_profileDataMiss;
-    k_popMandatoryQueue;
+    k_popMandatoryQueue; // Request processed, pop the queue
   }
 
-  transition(I, Ifetch, IS) {
+  transition(I, Ifetch, IS) { // Same as above, but allocated instruction block
     pp_allocateL1ICacheBlock;
     i_allocateTBE;
     ai_issueGETINSTR;
-    uu_profileInstMiss; // This is what actually counts number of cache misses?
+    uu_profileInstMiss; // This is what actually counts number of cache misses? Yead, dummy, it is.
     k_popMandatoryQueue;
   }
 
-  transition(I, Store, IM) {
+  transition(I, Store, IM) { // Same as above, but issue GETX
     oo_allocateL1DCacheBlock;
     i_allocateTBE;
     b_issueGETX;
@@ -745,18 +746,18 @@ machine(L1Cache, "MESIF Directory L1 Cache Multicore")
     k_popMandatoryQueue;
   }
 
-  transition(I, Inv) {
+  transition(I, Inv) { //This is needed because of silent transitions, like S -> I
     fi_sendInvAck;
     l_popRequestQueue;
   }
 
   // Transitions from Shared
-  transition(S, {Load,Ifetch}) {
+  transition(S, {Load,Ifetch}) { // Satisfiable right away
     h_load_hit; // Tells the sequencer, that load was successfull
     k_popMandatoryQueue;
   }
 
-  transition(S, Store, SM) {
+  transition(S, Store, SM) { // S->M upgrade, TBE needed for ACK counting
     i_allocateTBE;
     c_issueUPGRADE;
     uu_profileDataMiss;
@@ -764,14 +765,14 @@ machine(L1Cache, "MESIF Directory L1 Cache Multicore")
   }
 
   transition(S, L1_Replacement, I) {
-//Silent!
+    //Silent!
     forward_eviction_to_cpu;
     ff_deallocateL1CacheBlock;
   }
 
   transition(S, Inv, I) {
     forward_eviction_to_cpu;
-    fi_sendInvAck;
+    fi_sendInvAck; // L2 has clean copy, no need to write back
     l_popRequestQueue;
   }
 
@@ -783,12 +784,12 @@ machine(L1Cache, "MESIF Directory L1 Cache Multicore")
   }
 
   transition(E, Store, M) {
-//Silent?
+    //Silent? Yeah...
     hh_store_hit;
     k_popMandatoryQueue;
   }
 
-  transition(E, L1_Replacement, M_I) {
+  transition(E, L1_Replacement, M_I) { // We have to wait WB_ACK from higher level, since until it comes, we're the only entity owning a value, albeit in TBE
     forward_eviction_to_cpu;
     i_allocateTBE;
     g_issuePUTX;   // send data, but hold in case forwarded request
@@ -796,89 +797,92 @@ machine(L1Cache, "MESIF Directory L1 Cache Multicore")
   }
 
   transition(E, Inv, I) {
-    // don't send data, not modified yet
+    // don't send data, not modified yet, L2 still has valid value
     forward_eviction_to_cpu;
     fi_sendInvAck;
     l_popRequestQueue;
   }
 
-  transition(E, Fwd_GETX, I) {
+  transition(E, Fwd_GETX, I) { //GETX from different core / node
     forward_eviction_to_cpu;
-    d_sendDataToRequestor;
+//    d_sendDataToRequestor; // Send only to L2, maybe use an extra network!
+    d2_sendDataToL2;
     l_popRequestQueue;
   }
 
-  transition(E, {Fwd_GETS, Fwd_GET_INSTR}, S) {
+  transition(E, {Fwd_GETS, Fwd_GET_INSTR}, S) { //Same as above, but we can keep the value
     d_sendDataToRequestor;
     d2_sendDataToL2;
     l_popRequestQueue;
   }
 
   // Transitions from Modified
-  transition(M, {Load, Ifetch}) {
+  transition(M, {Load, Ifetch}) { // Can satisfy
     h_load_hit;
     k_popMandatoryQueue;
   }
 
-  transition(M, Store) {
+  transition(M, Store) { // Can satisfy
     hh_store_hit;
     k_popMandatoryQueue;
   }
 
   transition(M, L1_Replacement, M_I) {
-    forward_eviction_to_cpu;
+    forward_eviction_to_cpu; // Obviously
     i_allocateTBE; // Why do we need TBE here?
-    g_issuePUTX;   // send data, but hold in case forwarded request
+    g_issuePUTX;   // send data, but hold in case forwarded request, since this copy is the only valid one
     ff_deallocateL1CacheBlock;
   }
 
-  transition(M_I, WB_Ack, I) {
+  transition(M_I, WB_Ack, I) { // WB from higher level, we can ditch TBE
     s_deallocateTBE;
     o_popIncomingResponseQueue;
-    kd_wakeUpDependents;
+    kd_wakeUpDependents; // Wake up stalled requests
   }
 
-  transition(M, Inv, I) {
+  transition(M, Inv, I) { //eh? Why don't we do the same thing as in m->m_i?
     forward_eviction_to_cpu;
     f_sendDataToL2;
     l_popRequestQueue;
   }
 
-  transition(M_I, Inv, SINK_WB_ACK) {
+  transition(M_I, Inv, SINK_WB_ACK) { // We lost a race with L2
     ft_sendDataToL2_fromTBE;
     l_popRequestQueue;
   }
 
-  transition(M, Fwd_GETX, I) {
+  transition(M, Fwd_GETX, I) { //same as Inv effectively
     forward_eviction_to_cpu;
-    d_sendDataToRequestor;
+//    d_sendDataToRequestor;
+    f_sendDataToL2;
     l_popRequestQueue;
   }
 
-  transition(M, {Fwd_GETS, Fwd_GET_INSTR}, S) {
-    d_sendDataToRequestor;
-    d2_sendDataToL2;
+  transition(M, {Fwd_GETS, Fwd_GET_INSTR}, S) { Same as GETS for us, maybe move this to L2?
+//    d_sendDataToRequestor;
+//    d2_sendDataToL2; f vs. d2?
+    f_sendDataToL2;
     l_popRequestQueue;
   }
 
-  transition(M_I, Fwd_GETX, SINK_WB_ACK) {
-    dt_sendDataToRequestor_fromTBE;
+  transition(M_I, Fwd_GETX, SINK_WB_ACK) { //again, same as Inv
+    d2t_sendDataToL2_fromTBE;
     l_popRequestQueue;
   }
 
-  transition(M_I, {Fwd_GETS, Fwd_GET_INSTR}, SINK_WB_ACK) {
-    dt_sendDataToRequestor_fromTBE;
+  transition(M_I, {Fwd_GETS, Fwd_GET_INSTR}, SINK_WB_ACK) { //we lost a race
+//    dt_sendDataToRequestor_fromTBE;
     d2t_sendDataToL2_fromTBE;
     l_popRequestQueue;
   }
 
   // Transitions from IS
-  transition({IS, IS_I}, Inv, IS_I) {
+  transition({IS, IS_I}, Inv, IS_I) { //lost race
     fi_sendInvAck;
     l_popRequestQueue;
   }
 
-  transition(IS, Data_all_Acks, S) {
+  transition(IS, Data_all_Acks, S) { // all acks for address, we can use it now
     u_writeDataToL1Cache;
     h_load_hit;
     s_deallocateTBE;
@@ -886,7 +890,7 @@ machine(L1Cache, "MESIF Directory L1 Cache Multicore")
     kd_wakeUpDependents;
   }
 
-  transition(IS_I, Data_all_Acks, I) {
+  transition(IS_I, Data_all_Acks, I) { //all acks for address, we can drop it now
     u_writeDataToL1Cache;
     h_load_hit;
     s_deallocateTBE;
@@ -894,7 +898,7 @@ machine(L1Cache, "MESIF Directory L1 Cache Multicore")
     kd_wakeUpDependents;
   }
 
-  transition(IS, DataS_fromL1, S) {
+  transition(IS, DataS_fromL1, S) { //
     u_writeDataToL1Cache;
     j_sendUnblock;
     h_load_hit;
@@ -912,7 +916,7 @@ machine(L1Cache, "MESIF Directory L1 Cache Multicore")
     kd_wakeUpDependents;
   }
 
-  // directory is blocked when sending exclusive data - so what?
+  // directory is blocked when sending exclusive data - why?
   transition(IS_I, Data_Exclusive, E) {
     u_writeDataToL1Cache;
     h_load_hit;
@@ -975,10 +979,5 @@ machine(L1Cache, "MESIF Directory L1 Cache Multicore")
     s_deallocateTBE;
     o_popIncomingResponseQueue;
     kd_wakeUpDependents;
-  }
-
-  //TODO remove, should not be here
-  transition(I, WB_Ack) {
-    o_popIncomingResponseQueue;
   }
 }
