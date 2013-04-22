@@ -378,7 +378,7 @@ machine(L1Cache, "MESIF Directory L1 Cache Multicore")
   action(a_issueGETS, "a", desc="Issue GETS") {
     peek(mandatoryQueue_in, RubyRequest) {
       enqueue(requestIntraChipL1Network_out, RequestMsg, latency=l1_request_latency) { // Insert into queue, IntraChip
-        out_msg.Address := address; // So message is an object! ?? This directly sends the request to other Node, and I don't want that.
+        out_msg.Address := address;
         out_msg.Type := CoherenceRequestType:GETS;
         out_msg.Requestor := machineID;
         out_msg.Destination.add(mapAddressToRange(address, MachineType:L2Cache, //What does mapAddressToRange do?
@@ -386,7 +386,6 @@ machine(L1Cache, "MESIF Directory L1 Cache Multicore")
         DPRINTF(RubySlicc, "GETS issued for address: %s, id = %d destination: %s\n",
                 address, id + L2Offset, out_msg.Destination);
         out_msg.MessageSize := MessageSizeType:Control;
-//        out_msg.Prefetch := in_msg.Prefetch; // Prefetch ?? I'll probably drop this
         out_msg.AccessMode := in_msg.AccessMode;
       }
     }
@@ -811,7 +810,7 @@ machine(L1Cache, "MESIF Directory L1 Cache Multicore")
   }
 
   transition(E, {Fwd_GETS, Fwd_GET_INSTR}, S) { //Same as above, but we can keep the value
-    d_sendDataToRequestor;
+//    d_sendDataToRequestor;
     d2_sendDataToL2;
     l_popRequestQueue;
   }
@@ -840,14 +839,15 @@ machine(L1Cache, "MESIF Directory L1 Cache Multicore")
     kd_wakeUpDependents; // Wake up stalled requests
   }
 
-  transition(M, Inv, I) { //eh? Why don't we do the same thing as in m->m_i?
+  transition(M, Inv, I) { //eh? Why don't we do the same thing as in m->m_i? TOTOOTOTOTOTOODODODO changed to M_I, was I
     forward_eviction_to_cpu;
     f_sendDataToL2;
     l_popRequestQueue;
   }
 
   transition(M_I, Inv, SINK_WB_ACK) { // We lost a race with L2
-    ft_sendDataToL2_fromTBE;
+//    ft_sendDataToL2_fromTBE;
+    d2t_sendDataToL2_fromTBE;
     l_popRequestQueue;
   }
 
@@ -858,7 +858,7 @@ machine(L1Cache, "MESIF Directory L1 Cache Multicore")
     l_popRequestQueue;
   }
 
-  transition(M, {Fwd_GETS, Fwd_GET_INSTR}, S) { Same as GETS for us, maybe move this to L2?
+  transition(M, {Fwd_GETS, Fwd_GET_INSTR}, S) {// Same as GETS for us, maybe move this to L2?
 //    d_sendDataToRequestor;
 //    d2_sendDataToL2; f vs. d2?
     f_sendDataToL2;

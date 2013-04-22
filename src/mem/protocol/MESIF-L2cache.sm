@@ -50,22 +50,17 @@ machine(L2Cache, "MESIF Directory L2 Cache Multicore")
     // Base states
     I, AccessPermission:Invalid, desc="a L2 cache entry Idle";
     S, AccessPermission:Read_Only, desc="a L2 cache entry Shared";
-    E, AccessPermission:Read_Only, desc="a L2 cache entry Exclusive";
-    M, AccessPermission:Read_Write, desc="a L2 cache entry Modified", format="!b";
-    M_E, AccessPermission:Read_Write, desc="a L2 cache entry Modified, L1 copy no longer present", format="!b";
+    SS, AccessPermission:Read_Only, desc="a L2 cache entry Shared and in L1";
+    ES, AccessPermission:Read_Only, desc="a L2 cache entry Modifiable, not in L1, but possibly stale";
+    EX, AccessPermission:Read_Write, desc="a L2 cache entry Modifiable, possibly modified as L1 has the line";
 
     // Transient States
     IS, AccessPermission:Busy, desc="L2 idle, issued GETS relay, have not seen response yet";
-    IM, AccessPermission:Busy, desc="L2 idle, issued GETX relay, have not seen response yet";
-    SM, AccessPermission:Read_Only, desc="L2 idle, issued GETX relay, have not seen response yet";
-    IS_I, AccessPermission:Busy, desc="L2 idle, issued GETS relay, saw Inv before data because directory doesn't block on GETS hit";
-
-    M_I, AccessPermission:Busy, desc="L2 replacing, waiting for first ACK (either L1/L3)";
-    S_I, AccessPermission:Busy, desc="L2 replacing, waiting for L1 InvAck";
-    M_II, AccessPermission:Busy, desc="L2 replacing, waiting for second ACK (either L1/L3)";
-    M_WB, AccessPermission:Busy, desc="L2 replacing from Modified, waiting for WB_Data to send to L3";
-    SINK_WB_ACK, AccessPermission:Busy, desc="This is to sink WB_Acks from L3";
-
+    IX, AccessPermission:Busy, desc="L2 idle, issued GETX relay, have not seen response yet";
+    SS_I, AccessPermission:Busy, desc="L2 replacing, waiting for InvAck from L1";
+    EX_IWB, AccessPermission:Busy, desc="L2 replacing, waiting for WB Data from L1";
+    EX_IACK, AccessPermission:Busy, desc="L2 replacing, waiting for WB Ack from L3";
+    SS_X, AccessPermission:Read_Only, desc="L1 induced S->M upgrade";
   }
 
   // EVENTS
@@ -83,11 +78,10 @@ machine(L2Cache, "MESIF Directory L2 Cache Multicore")
     WB_Data,  desc="data from L1";
     WB_Data_clean,  desc="clean data from L1";
     Ack,      desc="writeback ack";
-    Ack_all,      desc="writeback ack";
+    InvAck,      desc="Inv ack";
 
     // internal generated request ??
     L2_Replacement,  desc="L2 Replacement", format="!r";
-    L2_Replacement_clean,  desc="L2 Replacement", format="!r";
 
     // other requests
     Fwd_GETX,   desc="GETX from other processor";
@@ -261,10 +255,12 @@ machine(L2Cache, "MESIF Directory L2 Cache Multicore")
   	if (unblockNetwork_in.isReady()) {
 		peek(unblockNetwork_in, ResponseMsg) {
 			enqueue(unblockNetwork_out, ResponseMsg) {
-				out_msg := in_msg;//Address;
+				out_msg.Address := in_msg.Address;
 				out_msg.Sender := machineID;
-				out_msg.Destination := (mapAddressToRange(in_msg.Address, MachineType:L3Cache,
+				out_msg.Destination.add(mapAddressToRange(in_msg.Address, MachineType:L3Cache,
                                 		        l3_select_low_bit, l3_select_num_bits));
+				out_msg.Type := in_msg.Type;
+				out_msg.MessageSize := in_msg.MessageSize;
 			}
 		}
 		unblockNetwork_in.dequeue();
@@ -286,26 +282,26 @@ machine(L2Cache, "MESIF Directory L2 Cache Multicore")
 
        if (is_valid(cache_entry)) {
           // The L2 contains the block, so proceeded with handling the request
-          trigger(L2Cache_request_type_to_event(in_msg.Type, in_msg.Address,
+          trigger(L1Cache_request_type_to_event(in_msg.Type, in_msg.Address,
                                                 in_msg.Requestor, cache_entry),
                   in_msg.Address, cache_entry, tbe);
         } else {
           if (L2cacheMemory.cacheAvail(in_msg.Address)) {
             // L2 does't have the line, but we have space for it in the L2
-            trigger(L2Cache_request_type_to_event(in_msg.Type, in_msg.Address,
+            trigger(L1Cache_request_type_to_event(in_msg.Type, in_msg.Address,
                                                   in_msg.Requestor, cache_entry),
                     in_msg.Address, cache_entry, tbe);
           } else {
             // No room in the L2, so we need to make room before handling the request
             Entry L2cache_entry := getCacheEntry(L2cacheMemory.cacheProbe(in_msg.Address));
-            if (isDirty(L2cache_entry)) {
+//            if (isDirty(L2cache_entry)) {
               trigger(Event:L2_Replacement, L2cacheMemory.cacheProbe(in_msg.Address),
                       L2cache_entry, L2_TBEs[L2cacheMemory.cacheProbe(in_msg.Address)]);
-            } else {
+//            } else {
 //TODO special handling needed? If it is here, then it is in L3, no writebacks needed. Used to be Event:L3_Replacement_clean for some reason.
-              trigger(Event:L2_Replacement_clean, L2cacheMemory.cacheProbe(in_msg.Address),
-                      L2cache_entry, L2_TBEs[L2cacheMemory.cacheProbe(in_msg.Address)]);
-            }
+//              trigger(Event:L2_Replacement_clean, L2cacheMemory.cacheProbe(in_msg.Address),
+//                      L2cache_entry, L2_TBEs[L2cacheMemory.cacheProbe(in_msg.Address)]);
+//            }
           }
         }
 	} else {
@@ -347,54 +343,37 @@ assert(false);
 	DPRINTF(RubySlicc, "Response to L2: %s", in_msg);
         assert(in_msg.Destination.isElement(machineID));
 	if (machineIDToMachineType(in_msg.Sender) == MachineType:L3Cache) {
-        Entry cache_entry := getCacheEntry(in_msg.Address);
-        TBE tbe := L2_TBEs[in_msg.Address];
-//TODO something's missing - can have Data in L2 but not here!
-        if(in_msg.Type == CoherenceResponseType:DATA_EXCLUSIVE) {
-          trigger(Event:Data_Exclusive, in_msg.Address, cache_entry, tbe);
-        } else if(in_msg.Type == CoherenceResponseType:DATA) {
-          if ((getState(tbe, cache_entry, in_msg.Address) == State:IS ||
-               getState(tbe, cache_entry, in_msg.Address) == State:IS_I) &&
-              machineIDToMachineType(in_msg.Sender) == MachineType:L3Cache) {
-              trigger(Event:DataS_fromL3, in_msg.Address, cache_entry, tbe);
-          } else if ( (getPendingAcks(tbe) - in_msg.AckCount) == 0 ) {
-            trigger(Event:Data_all_Acks, in_msg.Address, cache_entry, tbe);
-          } else {
-            trigger(Event:Data, in_msg.Address, cache_entry, tbe);
-          }
-        } else if (in_msg.Type == CoherenceResponseType:ACK) {
-	DPRINTF(RubySlicc, "Got ACK: %s\n", in_msg);
-          if ( (getPendingAcks(tbe) - in_msg.AckCount) == 0 ) {
-            trigger(Event:Ack_all, in_msg.Address, cache_entry, tbe);
-          } else {
-            trigger(Event:Ack, in_msg.Address, cache_entry, tbe);
-          }
-        } else if (in_msg.Type == CoherenceResponseType:WB_ACK) {
-          trigger(Event:WB_Ack, in_msg.Address, cache_entry, tbe);
-        } else {
-          error("Invalid L2 response type");
-	  assert(false);
-        }
+		//L3 stuff
+		Entry cache_entry := getCacheEntry(in_msg.Address);
+        	TBE tbe := L2_TBEs[in_msg.Address];
+        	if(in_msg.Type == CoherenceResponseType:DATA_EXCLUSIVE) {
+        		trigger(Event:Data_Exclusive, in_msg.Address, cache_entry, tbe);
+	        } else if(in_msg.Type == CoherenceResponseType:DATA) {
+        		trigger(Event:Data, in_msg.Address, cache_entry, tbe);
+	        } else if (in_msg.Type == CoherenceResponseType:ACK) {
+			DPRINTF(RubySlicc, "Got ACK: %s\n", in_msg);
+			assert(false); // i don't need ack from L3, do i?
+	        } else if (in_msg.Type == CoherenceResponseType:WB_ACK) {
+        		trigger(Event:WB_Ack, in_msg.Address, cache_entry, tbe);
+		} else {
+			error("unknown message type from L3");
+		}
 	} else { //L1 response
 		DPRINTF(RubySlicc, "Response from L1: %s\n", in_msg);
 	        assert(in_msg.Destination.isElement(machineID));
+		assert(machineIDToMachineType(in_msg.Sender) == MachineType:L1Cache);
         	Entry cache_entry := getCacheEntry(in_msg.Address);
 	        TBE tbe := L2_TBEs[in_msg.Address];
-		assert(machineIDToMachineType(in_msg.Sender) == MachineType:L1Cache);
           	if(in_msg.Type == CoherenceResponseType:DATA) {
 			if (in_msg.Dirty) {
-				trigger(Event:WB_Data, in_msg.Address, cache_entry, tbe);
+				trigger(Event:WB_Data, in_msg.Address, cache_entry, tbe); //L1 changed the data
 			} else {
-				trigger(Event:WB_Data_clean, in_msg.Address, cache_entry, tbe);
+				trigger(Event:WB_Data_clean, in_msg.Address, cache_entry, tbe); //L1 did not change the data
 			}
 		} else if (in_msg.Type == CoherenceResponseType:ACK) {
-			if ((getPendingAcks(tbe) - in_msg.AckCount) == 0) {
-				trigger(Event:Ack_all, in_msg.Address, cache_entry, tbe);
-	        		} else {
-					trigger(Event:Ack, in_msg.Address, cache_entry, tbe);
-				}
+			trigger(Event:Ack, in_msg.Address, cache_entry, tbe);
 		} else {
-			error("unknown message type");
+			error("unknown message type from L1");
 		}
         }
       }
@@ -517,7 +496,7 @@ assert(false);
       out_msg.Sender := machineID;
       out_msg.Destination.add(mapAddressToRange(address, MachineType:L3Cache,
                                                   l3_select_low_bit, l3_select_num_bits));
-      out_msg.MessageSize := MessageSizeType:Response_Data; // response control, response data, writeback data ---------------------------------------------------------1!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!11
+      out_msg.MessageSize := MessageSizeType:Response_Data; // response control, response data, writeback data ---------------------------------------------------------1!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!1@@@@yeah, i need more actions
     }
   }
 
@@ -588,7 +567,11 @@ peek(responseIntraChipL2Network_in, ResponseMsg) {
       out_msg.Requestor:= machineID;
       out_msg.Destination.add(mapAddressToRange(address, MachineType:L3Cache,
                                                   l3_select_low_bit, l3_select_num_bits));
-        out_msg.MessageSize := in_msg.Request;
+      if (in_msg.Dirty) {
+        out_msg.MessageSize := MessageSizeType:Writeback_Data;
+      } else {
+        out_msg.MessageSize := MessageSizeType:Writeback_Control;
+      }
       }
   }
 }
@@ -653,11 +636,11 @@ enqueue(requestIntraChipL2Network_out, RequestMsg, latency=l2_response_latency) 
     DPRINTF(RubySlicc, "Allocated TBE for %s %s %s\n", address, tbe, L2_TBEs);
   }
 
-  action(popIncomingRequestQueue, "l", desc="Pop incoming request queue and profile the delay within this virtual network") {
+  action(popRequestQueue, "l", desc="Pop incoming request queue and profile the delay within this virtual network") {
     profileMsgDelay(2, requestIntraChipL2Network_in.dequeue_getDelayCycles());
   }
 
-  action(popIncomingResponseQueue, "o", desc="Pop Incoming Response queue and profile the delay within this virtual network") {
+  action(popResponseQueue, "o", desc="Pop Incoming Response queue and profile the delay within this virtual network") {
     profileMsgDelay(1, responseIntraChipL2Network_in.dequeue_getDelayCycles());
   }
 
@@ -724,6 +707,10 @@ action(stall_incoming_l1_responses, desc="recycle L1 request queue") {
 	stall_and_wait(responseIntraChipL2Network_in, address);
 }
 
+action(downgradeL1, desc="...") {
+	assert(false);
+}
+
 
 
   action(t_sendWBAckFromResponse, "t", desc="Send writeback ACK") { //WB_ACK to L1
@@ -742,7 +729,7 @@ action(stall_incoming_l1_responses, desc="recycle L1 request queue") {
   action(t_sendWBAckFromRequest, "tt", desc="Send writeback ACK") {
     peek(requestIntraChipL2Network_in, RequestMsg) {
       enqueue(responseIntraChipL2Network_out, ResponseMsg, latency=to_l3_latency) {
-	assert(machineIDToMachineType(in_msg.Sender) == MachineType:L1Cache);
+	assert(machineIDToMachineType(in_msg.Requestor) == MachineType:L1Cache);
         out_msg.Address := address;
         out_msg.Type := CoherenceResponseType:WB_ACK;
         out_msg.Sender := machineID;
@@ -761,6 +748,21 @@ action(stall_incoming_l1_responses, desc="recycle L1 request queue") {
     }
   }
 
+  action(sendWBDataFromL1PUTX, desc="...") {
+	peek(requestIntraChipL2Network_in, RequestMsg) {
+		enqueue(responseIntraChipL2Network_out, ResponseMsg) {
+			out_msg.Address := in_msg.Address;
+			out_msg.Dirty := in_msg.Dirty;
+			out_msg.DataBlk := in_msg.DataBlk;
+			out_msg.Type := CoherenceResponseType:DATA;
+			out_msg.Sender := machineID;
+			out_msg.MessageSize := MessageSizeType:Writeback_Data;
+			out_msg.Destination.add(mapAddressToRange(address, MachineType:L3Cache,
+                                                  l3_select_low_bit, l3_select_num_bits));
+		}
+	}
+  }
+
 action(die, "die", desc="die") {
 assert(false);
 }
@@ -768,407 +770,141 @@ assert(false);
   //*****************************************************
   // TRANSITIONS
   //*****************************************************
-
-  // Transitions for Load/Store/Replacement/WriteBack from transient states //TODO recently added M_II and L1_PUTX event, state, should be there I guess, but iff waiting for ack from L3, maybe an extra state will be needed after all.
-  transition({IS, IM, IS_I, M_I, SM, SINK_WB_ACK}, {L1_GETS, L1_GET_INSTR, L1_GETX, L2_Replacement}) {
-stall_incoming_l1_requests;
-  }
-
-  // Transitions from I (Idle)
-//TODO all transient states, added M_WB, although is should not be there imo
-// L1_PUTX only makes sense in one of the base states I guess
-  transition(SI, L1_PUTX) { // Only clean states!
-//stall_incoming_l1_requests; ???
-    t_sendWBAckFromReq;
-    popRequestQueue;
-  }
-
+  
+  // L1 needs data/instruction
   transition(I, {L1_GETS, L1_GET_INSTR}, IS) {
     a_relayRequestToL3;
     oo_allocateL2CacheBlock;
     i_allocateTBE; // MSHR
     uu_profileDataMiss;
-    l_popRequestQueue;
+    popRequestQueue;
   }
-
-  transition(I, L1_GETX, IM) {
+  
+  // L1 want to write to cache block
+  transition(I, L1_GETX, IX) {
+    a_relayRequestToL3;
     oo_allocateL2CacheBlock;
     i_allocateTBE;
     uu_profileDataMiss;
-    a_relayRequestToL3;
-    l_popRequestQueue;
+    popRequestQueue;
   }
 
-  transition({I, M_WB}, Inv) { //Inv only comes from L3
+  transition(I, L1_PUTX) {
+    die;
+  }
+
+  // Should not happen, we'll see
+  transition(I, Inv) {
+    die;
     fi_sendInvAck;
-    l_popRequestQueue; // Mandatory vs. Request?
+    popRequestQueue;
   }
-
-//TODO does not make sense toto je uplne spatne proboha ziveho
-//	transition(M_I, {WB_Data, WB_Data_clean}) {
-//		a_relayResponseToL3;
-//		o_popIncomingResponseQueue;
-//	}
-
-kokot
-transition(M_WB, L1_GETX, IM) {
-	//implies that WB from L1 was sent, right? Or L1 did not have the value. Not really, we could have lost a race before or L1 silenty transitioned?
-    oo_allocateL2CacheBlock;
-//    i_allocateTBE; //i don't think TBE is needed here TODO
-    uu_profileDataMiss;
-    a_relayRequestToL3;
-    l_popRequestQueue;
-}
-
-transition(M_WB, L1_PUTX, M_I) {
-//L2 has lost a race with L1, sort of at least. 
-oo_allocateL2CacheBlock;
-t_sendWBAckFromReq;
-a_relayRequestToL3;
-l_popRequestQueue;
-}
-
-//TODO taky ne. protoze, nejaky M_I, nebo S_I stav leda tak.
-//	transition(I, WB_Ack) {		
-//		o_popIncomingResponseQueue;
-//	}
 
   // Transitions from Shared
-  transition(S, {L1_GETS,L1_GET_INSTR}) {
-    sendResponseToL1;
-    o_popIncomingResponseQueue;
-  }
 
-  transition(S, L1_GETX, SM) {
+  // L1 needs a data we have, but L1 doesn't
+  transition(S, {L1_GETS,L1_GET_INSTR}, SS) {
+    sendResponseToL1;
+    popResponseQueue;
+  }
+  
+  // L1 needs to write, we have to get the value from L2. Or, we could send it to L1 right away, but that could lead to all sorts of races and we don't want that
+  transition({S, SS}, L1_GETX, SS_X) {
     i_allocateTBE;
     a_relayRequestToL3;
     uu_profileDataMiss;
-    l_popRequestQueue;
+    popRequestQueue;
   }
 
-  transition(S, L2_Replacement, S_I) { // Just L1, L3 can keep the value
-    sendInvToL1;
-    i_allocateTBE;
+  // L1 does not have the value, L3 has clean copy, we can do silent transition
+  transition(S, L2_Replacement, I) { // Just L1, L3 can keep the value
     ff_deallocateL2CacheBlock;
+  }
+  
+  // L1 does have the value, L3 has clean copy, we can do silent transition, but L1 has to be invalidated to comply with inclusivity constraint
+  transition(SS, L2_Replacement, SS_I) { // Just L1, L3 can keep the value
+    // TBE not needed
+    fi_sendInvAck;
+    ff_deallocateL2CacheBlock;
+  }
+
+  transition(ES, L1_GETX, EX) { //Respond to L1, transition to a state with shared M value
+    sendResponseToL1;
+    popRequestQueue;
+  }
+
+  transition(IS, Data, SS) { //Got data from L3, relaying to L1
+    u_writeDataToL2CacheFromRespobse;
+    sendResponseToL1;
+    popResponseQueue;
+  }
+
+  transition(IX, Data, EX) { //Got data from L3, relaying to L1
+    u_writeDataToL2CacheFromRespobse;
+    sendResponseToL1;
+    popResponseQueue;
+    kd_wakeUpDependents;
+  }
+
+  transition(EX, L2_Replacement, EX_IWB) { // L2 eviction, cannot send data to L3 until L1 writebacks
+    ff_deallocateL2CacheBlock;
+    sendInvToL1;
+    //tbe not needed
+  }
+
+  transition(EX_IWB, L1_PUTX, EX_IACK) { // L1 wanted eviction *before* we send Inv, relay PUTX with data to L3 and wait for WB_ACK
+    a_relayRequestToL3;
+    t_sendWBAckFromRequest;
+    popRequestQueue;
+    kd_wakeUpDependents;
+  }
+
+  transition(EX_IACK, Ack, EX_IACK) { // Lost a race with L1, PUTX issued, but Inv got the L1 anyway and now it sends an Ack
+    popResponseQueue;
+  }
+
+  transition(EX_IWB, {WB_Data, WB_Data_clean}, EX_IACK) { // Writeback data from L1 after Invalidation, waiting for L3 Inv Ack, L1 does not want a WB_ACK
+    g_issuePUTXFromToL1q;
+    popResponseQueue;
+    kd_wakeUpDependents;
+  }
+
+  transition(EX_IACK, Inv) { // L3 wants to invalidate while we wait for WB_ACK from it, we can just do nothing and it will deal with this situation, since we've already sent WB_DATA
+    popRequestQueue;
+  }
+
+  transition(EX_IWB, Inv) { // We cannot invalidate until response with Write Back data from L1 arrives
+    stall_incoming_l1_requests;
+  }
+
+  transition(EX_IACK, WB_Ack, I) { // Ack from L3 arrived, can go to starting state
+    popResponseQueue;
+    kd_wakeUpDependents;
+  }
+
+  transition(EX, L1_PUTX, ES) { // L1 wants eviction, value can stay in L2
+    writeDataToCacheFromRequest;
+    t_sendWBAckFromRequest;
+    popRequestQueue;
+  }
+
+  transition(ES, L2_Replacement, EX_IACK) { // L1 does not have the line, only PUTX needed
+    g_issuePUTX;
+    ff_deallocateL2CacheBlock;
+    //TBE not needed, right?
   }
  
-
-   //TODO responses from S_I
-
-//   transition(S_I, Ack, I) {
-//	s_deallocateTBE;
-//	o_popIncomingResponseQueue;
-//   }
-
-   transition(S_I, InvAck, I) {
-	s_deallocateTBE;
-	o_popIncomingResponseQueue;
-   }
-
-  transition(M, L1_PUTX, M_E) {
-//	a_relayRequestToL3; // TODO instead of sending this to L3, change the state
-	writeDataToCacheFromRequest;
-	t_sendWBAckFromReq;
-	l_popRequestQueue;
+  transition(IX, L2_Replacement) { // We have to satisfy previous request first, but it will not serve, since L1 will be invalidated shortly
+    stall_incoming_l1_requests;
   }
 
-  transition(S, Inv, I) { //has to go to L1 as well, no need to wait for WB_ACK, there will be none
-    sendInvToL1;
-    fi_sendInvAck;
-    l_popRequestQueue;
-  }
-
-  // Transitions from Exclusive
-
-  transition(E_S, {L1_GETX, L1_GET_INSTR}, E_M) {
-    sendResponseToL1;
-    o_popIncomingResponseQueue;
-  }
-
-//TODO by not specifying this, we imply silent E->M transition
-//  transition(E, L1_GETX, M) {
-//    hh_store_hit;
-//    k_popMandatoryQueue;
-//  }
-
-  //going to S_I, used to be M_I, but we only need ack from L3
-//do i really need to send data to L3? I guess not.
-  transition(E, L2_Replacement, S_I) {
-    //silent L2 eviction for L3, but L1 has to be evicted
-    sendInvToL1;
-    i_allocateTBE; // not sure at all about this, would be ok to drop totally i guess
-    g_issuePUTX;   // send data, but hold in case forwarded request
-    ff_deallocateL2CacheBlock;
-  }
-
-  transition(E_S, Inv, I) {
-    // don't send data
-//What about freeing space?
-    fi_sendInvAck;
-    l_popRequestQueue;
-  }
-
-  transition(E_M, Inv, M_I) { //TODO the rigth state? We need data from L1, since E->M transition is silent. Maybe change.
-	//neco
-  }
-
-  transition(E, Fwd_GETX, I) { //this is wrong, we need data from L1, maybe just relay request and be done with it
-die;
-    d_relayDataToRequestor;
-    l_popRequestQueue;
-  }
-
-action(printerr, desc="void")
-{
-	DPRINTF(RubySlicc, "Got FWD GETS when invalid\n");
-        assert(false);
-}
-
-  transition(I, Fwd_GETS, I) {
-printerr;
-  }
-
-
-  transition(E_S, {Fwd_GETS, Fwd_GET_INSTR}, S) {
-    d_relayDataToRequestor; blble
-    d2_sendDataToL3;
-    //todo InformL1
-    l_popRequestQueue;
-  }
-
-  transition(E_M, {Fwd_GETS, Fwd_GET_INSTR}, S) {
-	downgradeL1;
-	d2_sendDataToL3;
-    	l_popRequestQueue;
-  }
-
-  // Transitions from Modified
-//  transition(M, {L1_GETX, L1_GET_INSTR}) {
-//    sendExclusiveDataToL1
-//	sendResponseToL1;
-//l_popRequestQueue;
-//  }
-
-  //here we need M_I, because there will be two InvACKs
-  transition(M, L2_Replacement, M_WB) {
-    i_allocateTBE; // Why do we need TBE here?
-    // Cannot be silent
-    sendInvToL1;
-//    g_issuePUTX;   // send data, but hold in case forwarded request TODO Data cannot be sent, value might have changed in L1
-    ff_deallocateL2CacheBlock;
-  }
-
-  transition(M_I, WB_Data) {
-	//hmm, L1 has evicted self and we caught it in M_I state, it is safe to do nothing, proper PUTX had to be issued earlier
-	o_popIncomingResponseQueue;
-  }
-
-  transition(M_WB, {WB_Data_clean, WB_Data}, M_I) {
-	//TODO update TBE
-	t_sendWBAck;
-	g_issuePUTXFromToL1q; //now send to L3
-        o_popIncomingResponseQueue;
-  }
-
-  //TODO imho not, but we'll see, this would imply that L2 though that L1 was in M state, but it actually was in some other state. Wb_Ack only from L3, right?
-//  transition(M_WB, WB_Ack, M_I) {
-//	g_issuePUTXfromTBE;
-//        o_popIncomingResponseQueue;
-//  }
-
-//TODO should not happen, L1 should send this only when L2 is in S_I state
-transition(M_WB, Ack, I) {
-//DPRINTF(RubySlicc, "I dunno, probably an error.\n");
-        o_popIncomingResponseQueue;
-}
-
-//  transition(M_I, {WB_Ack, Ack}, M_II) { //used to be transition to I We need ACKs from both L1 and L3 TODO TODO TODO
-//    s_deallocateTBE;
-//    o_popIncomingResponseQueue;
-//    kd_wakeUpDependents;
-//  }
-
-  transition(M_I, {WB_Ack, Ack}, I) { //used to be transition to I We need ACKs from both L1 and L3 TODO TODO TODO
-    s_deallocateTBE; //kdyz toto odstranim, tak to nepada !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-    o_popIncomingResponseQueue;
-    kd_wakeUpDependents;
-  }
-
-  transition(M_II, {WB_Data, WB_Data_clean}, M_II) { //used to be transition to I We need ACKs from both L1 and L3 TODO TODO TODO
-    a_relayResponseToL3;
-    o_popIncomingResponseQueue;
-  }
-
-  transition(M, Inv, I) {
+  transition(ES, Inv, EX_IACK) { // Cannot be silent, value potentially stale
     f_sendDataToL3;
-    l_popRequestQueue;
-  }
-
-  transition(M_I, Inv, SINK_WB_ACK) {
-    ft_sendDataToL3_fromTBE;
-    l_popRequestQueue;
-  }
-
-//TODO well, idiot, 'M' means that we cannot send data, only L1, can.
-  transition(M, Fwd_GETX, I) {
-    d_relayDataToRequestor;
-    l_popRequestQueue;
-  }
-
-  transition(M, {Fwd_GETS, Fwd_GET_INSTR}, S) {
-    d_relayDataToRequestor;
-    d2_sendDataToL3;
-    l_popRequestQueue;
-  }
-
-//TODO something needs to be done, right?
-//  transition(M_I, Fwd_GETX, SINK_WB_ACK) {
-//    dt_sendDataToRequestor_fromTBE;
-//    l_popRequestQueue;
-//  }
-
-//  transition(M_I, {Fwd_GETS, Fwd_GET_INSTR}, SINK_WB_ACK) {
-//    dt_sendDataToRequestor_fromTBE;
-//    d2t_sendDataToL3_fromTBE;
-//    l_popRequestQueue;
-//  }
-
-  // Transitions from IS
-  transition({IS, IS_I}, Inv, IS_I) {
-    fi_sendInvAck;
-    l_popRequestQueue;
-  }
-
-  transition(IS, Data_all_Acks, S) {
-    u_writeDataToL2CacheFromL3; //From what??
-//    h_load_hit;
-    s_deallocateTBE;
-    sendResponseToL1;
-    kd_wakeUpDependents;
-    o_popIncomingResponseQueue;
-  }
-
-  transition(IS_I, Data_all_Acks, I) {
-    u_writeDataToL2CacheFromL1; // From what???
-//    h_load_hit;
-    s_deallocateTBE;
-    o_popIncomingResponseQueue;
-    kd_wakeUpDependents;
-  }
-
-  transition(IS, DataS_fromL3, S) {
-    u_writeDataToL2CacheFromL1; // From what???
-//    h_load_hit;
-    s_deallocateTBE;
-    o_popIncomingResponseQueue;
-    kd_wakeUpDependents;
-  }
-
-  transition(IS_I, DataS_fromL3, I) { // ????????
-    u_writeDataToL2CacheFromL1; // From what??
-//    h_load_hit;
-    s_deallocateTBE;
-    o_popIncomingResponseQueue;
-    kd_wakeUpDependents;
-  }
-
-  // directory is blocked when sending exclusive data
-  transition(IS_I, Data_Exclusive, E) {
-    u_writeDataToL2CacheFromL1; // From what???
-//    h_load_hit;
-    s_deallocateTBE;
-    o_popIncomingResponseQueue;
-    kd_wakeUpDependents;
-  }
-
-  transition(IS, Data_Exclusive, E) {
-    u_writeDataToL2CacheFromL1; // Frow what??
-//    h_load_hit;
-    s_deallocateTBE;
-    o_popIncomingResponseQueue;
-    kd_wakeUpDependents;
-  }
-
-  // Transitions from IM
-  transition({IM, SM}, Inv, IM) {
-    fi_sendInvAck;
-    l_popRequestQueue;
-  }
-
-  transition(IM, Data, SM) {
-    u_writeDataToL2CacheFromL1;
-    q_updateAckCount;
-    o_popIncomingResponseQueue;
-  }
-
-  transition(IM, Data_all_Acks, M) {
-    u_writeDataToL2CacheFromL1;
-//    hh_store_hit;
-    s_deallocateTBE;
-    sendResponseToL1;
-    kd_wakeUpDependents;
-    o_popIncomingResponseQueue;
-  }
-
-  // transitions from SM
-  transition({SM, IM}, Ack) {
-    q_updateAckCount;
-    o_popIncomingResponseQueue;
-  }
-
-  transition(SM, Ack_all, M) {
-//    hh_store_hit;
-    s_deallocateTBE;
-    o_popIncomingResponseQueue;
-    kd_wakeUpDependents;
-  }
-
-  transition(SINK_WB_ACK, Inv){
-    fi_sendInvAck;
-    l_popRequestQueue;
-  }
-
- transition(S, WB_Ack) {
-//   a_relayResponseToL1;
-// An Extra state is needed here!!!!! TODO TODO TODO TODO, do not send ack to L1, it already in I state, because we've sent the ack before. Question is, whether we should change state here as well. Might be its not really needed. Who knows.
-   o_popIncomingResponseQueue;
-}
-
-  transition(SINK_WB_ACK, WB_Ack, I) {
-    s_deallocateTBE;
-    o_popIncomingResponseQueue;
-    kd_wakeUpDependents;
-  }
-//hotfix
-  transition(SINK_WB_ACK, Ack, I) {
-    o_popIncomingResponseQueue;
-  }
-
-//TODO i am not too sure about this.
-  transition(SINK_WB_ACK, WB_Data) {
-//weird, i should not be stalling responses!
-	stall_incoming_l1_responses;
-//	t_sendWBAck;
-//    	o_popIncomingResponseQueue;
-  }
-
-// and this
-  transition(SINK_WB_ACK, L1_PUTX) {
-	t_sendWBAckFromReq;
-	a_relayRequestToL3;
-    	l_popRequestQueue;
-  }
-
-// and this too
-  transition(I, WB_Ack)
-{
-    	o_popIncomingResponseQueue;
-}
-
-  // Transitions from Idle
-  transition(I, L2_Replacement) { //just frees memory?
-    // Nothing would be sufficient, right?
     ff_deallocateL2CacheBlock;
+    popRequestQueue;
   }
 
+  transition(EX_IACK, L1_PUTX) { // We have to stall this request, L1 got evicted too quickly and we are still waiting for L3 WB_ACK
+    stall_incoming_l1_requests;
+  }
 }
