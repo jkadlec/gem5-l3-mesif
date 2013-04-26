@@ -845,7 +845,7 @@ machine(L1Cache, "MESIF Directory L1 Cache Multicore")
     l_popRequestQueue;
   }
 
-  transition(M_I, Inv, SINK_WB_ACK) { // We lost a race with L2
+  transition(M_I, Inv, SINK_WB_ACK) { // We lost a race with L2 TODO TODO TODO, removed data sending, but will not work wit multiple cores I guess
 //    ft_sendDataToL2_fromTBE;
     d2t_sendDataToL2_fromTBE;
     l_popRequestQueue;
@@ -973,6 +973,10 @@ machine(L1Cache, "MESIF Directory L1 Cache Multicore")
   transition(SINK_WB_ACK, Inv){
     fi_sendInvAck;
     l_popRequestQueue;
+  }
+  
+  transition(I, WB_Ack) { // TODO should it be here? Investigate when you have time
+    o_popIncomingResponseQueue;
   }
 
   transition(SINK_WB_ACK, WB_Ack, I){

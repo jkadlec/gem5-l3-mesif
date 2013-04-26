@@ -273,8 +273,12 @@ machine(L3Cache, "MESIF Directory L3 Cache CMP")
     }
   }
 
-  int getPendingAcks(TBE tbe) {
-    return tbe.pendingAcks;
+  int getPendingAcks(TBE tbe) { //TODO this if is not ok!
+    if (is_valid(tbe)) {
+	    return tbe.pendingAcks;
+    } else {
+            return 0;
+    }
   }
 
   bool isDirty(Entry cache_entry) {
@@ -712,6 +716,17 @@ machine(L3Cache, "MESIF Directory L3 Cache CMP")
     }
   }
 
+  action(t_sendWBAckResp, "tkk", desc="Send writeback ACK") {
+    peek(responseIntraChipL3Network_in, ResponseMsg) {
+      enqueue(responseIntraChipL3Network_out, ResponseMsg, latency=to_l3_latency) {
+        out_msg.Address := address;
+        out_msg.Type := CoherenceResponseType:WB_ACK;
+        out_msg.Sender := machineID;
+        out_msg.Destination.add(in_msg.Sender);
+        out_msg.MessageSize := MessageSizeType:Response_Control;
+  }
+}
+}
   action(ts_sendInvAckToUpgrader, "ts", desc="Send ACK to upgrader") {
     peek(L2RequestIntraChipL3Network_in, RequestMsg) {
       enqueue(responseIntraChipL3Network_out, ResponseMsg, latency=to_l3_latency) {
@@ -1104,6 +1119,7 @@ machine(L3Cache, "MESIF Directory L3 Cache CMP")
   transition({MT_I, MCT_I}, WB_Data, M_I) {
     qq_writeDataToTBE;
     ct_exclusiveReplacementFromTBE;
+    t_sendWBAckResp; // TODO added by me, I guess it should be like that, right?
     o_popIncomingResponseQueue;
   }
 
@@ -1151,5 +1167,20 @@ machine(L3Cache, "MESIF Directory L3 Cache CMP")
     s_deallocateTBE;
     o_popIncomingResponseQueue;
     kd_wakeUpDependents;
+  }
+
+
+  /////////////////////////////////////stuff below added by me
+
+  transition(M_I, Ack_all) {
+    o_popIncomingResponseQueue; // TODO added by me, who knows
+  }
+
+  transition({MT, M}, Exclusive_Unblock) { // TODO this was added by me. I guess this happens when L2 has the value and sends it to L1. I could filter these messages at L2, but oh well.
+    k_popUnblockQueue;
+  }
+  
+  transition(NP, Ack) {
+    o_popIncomingResponseQueue;
   }
 }
