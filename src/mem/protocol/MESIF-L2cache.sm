@@ -29,8 +29,8 @@
 
 machine(L2Cache, "MESIF Directory L2 Cache Multicore")
    : CacheMemory * L2cacheMemory,
-   int id,
-   int L2Offset,
+   int L1ID,
+   int banks,
    int l3_select_num_bits, //?
    int l2_request_latency = 2,
    int l2_response_latency = 2,
@@ -123,7 +123,7 @@ machine(L2Cache, "MESIF Directory L2 Cache Multicore")
 
   TBETable L2_TBEs, template_hack="<L2Cache_TBE>";
 
-  int l3_select_low_bit, default="RubySystem::getBlockSizeBits()";
+//  int l3_select_low_bit, default="RubySystem::getBlockSizeBits()";
 
   void set_cache_entry(AbstractCacheEntry a);
   void unset_cache_entry();
@@ -193,6 +193,7 @@ machine(L2Cache, "MESIF Directory L2 Cache Multicore")
   }
 
   int getPendingAcks(TBE tbe) {
+    assert(is_valid(tbe));
     return tbe.pendingAcks;
   }
 
@@ -259,8 +260,7 @@ machine(L2Cache, "MESIF Directory L2 Cache Multicore")
 			enqueue(unblockNetwork_out, ResponseMsg) {
 				out_msg.Address := in_msg.Address;
 				out_msg.Sender := machineID;
-				out_msg.Destination.add(mapAddressToRange(in_msg.Address, MachineType:L3Cache,
-                                		        l3_select_low_bit, l3_select_num_bits));
+				out_msg.Destination.add(mapAddressToBank(in_msg.Address, MachineType:L3Cache, banks));
 				out_msg.Type := in_msg.Type;
 				out_msg.MessageSize := in_msg.MessageSize;
 			}
@@ -386,8 +386,7 @@ assert(false);
         out_msg.Type := in_msg.Type;
         out_msg.Requestor := machineID;
         out_msg.DataBlk := in_msg.DataBlk;
-        out_msg.Destination.add(mapAddressToRange(address, MachineType:L3Cache, //What does mapAddressToRange do?
-                                                  l3_select_low_bit, l3_select_num_bits));
+        out_msg.Destination.add(mapAddressToBank(address, MachineType:L3Cache, banks));
         DPRINTF(RubySlicc, "Relay to L3 for: address: %s, destination: %s, type %s\n",
                 address, out_msg.Destination, in_msg.Type);
         out_msg.MessageSize := in_msg.MessageSize;
@@ -404,8 +403,7 @@ assert(false);
         out_msg.Type := in_msg.Type;
         out_msg.Sender := machineID;
         out_msg.DataBlk := in_msg.DataBlk;
-        out_msg.Destination.add(mapAddressToRange(address, MachineType:L3Cache, //What does mapAddressToRange do?
-                                                  l3_select_low_bit, l3_select_num_bits));
+        out_msg.Destination.add(mapAddressToBank(address, MachineType:L3Cache, banks));
         DPRINTF(RubySlicc, "Relay for: address: %s, destination: %s\n",
                 address, out_msg.Destination);
         out_msg.MessageSize := in_msg.MessageSize;
@@ -421,8 +419,7 @@ assert(false);
         out_msg.Sender := machineID;
         out_msg.DataBlk := in_msg.DataBlk;
         out_msg.Dirty := in_msg.Dirty;
-        out_msg.Destination.add(mapAddressToRange(address, MachineType:L1Cache, //What does mapAddressToRange do?
-                                                  id, l3_select_num_bits));
+        out_msg.Destination.add(idToMachineID(MachineType:L1Cache, L1ID));
         DPRINTF(RubySlicc, "Relay for: address: %s, destination: %s\n",
                 address, out_msg.Destination);
         out_msg.MessageSize := in_msg.MessageSize;
@@ -453,8 +450,7 @@ assert(false);
       out_msg.DataBlk := cache_entry.DataBlk;
       out_msg.Dirty := cache_entry.Dirty;
       out_msg.Sender := machineID;
-      out_msg.Destination.add(mapAddressToRange(address, MachineType:L3Cache, // ?? I guess that direct L3 ID has be here. There's just one L3 for each L2
-                                                  l3_select_low_bit, l3_select_num_bits));
+      out_msg.Destination.add(mapAddressToBank(address, MachineType:L3Cache, banks));
       out_msg.MessageSize := MessageSizeType:Response_Data;
     }
   }
@@ -482,8 +478,7 @@ assert(false);
       out_msg.DataBlk := tbe.DataBlk;
       out_msg.Dirty := tbe.Dirty;
       out_msg.Sender := machineID;
-      out_msg.Destination.add(mapAddressToRange(address, MachineType:L3Cache,
-                                                  l3_select_low_bit, l3_select_num_bits));
+      out_msg.Destination.add(mapAddressToBank(address, MachineType:L3Cache, banks));
       out_msg.MessageSize := MessageSizeType:Response_Data;
     }
   }
@@ -496,8 +491,7 @@ assert(false);
       out_msg.DataBlk := cache_entry.DataBlk;
       out_msg.Dirty := cache_entry.Dirty;
       out_msg.Sender := machineID;
-      out_msg.Destination.add(mapAddressToRange(address, MachineType:L3Cache,
-                                                  l3_select_low_bit, l3_select_num_bits));
+      out_msg.Destination.add(mapAddressToBank(address, MachineType:L3Cache, banks));
       out_msg.MessageSize := MessageSizeType:Response_Data; // response control, response data, writeback data ---------------------------------------------------------1!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!1@@@@yeah, i need more actions
     }
   }
@@ -510,8 +504,7 @@ assert(false);
       out_msg.DataBlk := tbe.DataBlk;
       out_msg.Dirty := tbe.Dirty;
       out_msg.Sender := machineID;
-      out_msg.Destination.add(mapAddressToRange(address, MachineType:L3Cache,
-                                                  l3_select_low_bit, l3_select_num_bits));
+      out_msg.Destination.add(mapAddressToBank(address, MachineType:L3Cache, banks));
       out_msg.MessageSize := MessageSizeType:Writeback_Data;
     }
   }
@@ -535,8 +528,7 @@ assert(false);
         out_msg.Address := address;
         out_msg.Type := CoherenceRequestType:INV;
         out_msg.Requestor := machineID;
-        out_msg.Destination.add(mapAddressToRange(address, MachineType:L1Cache,
-                                                  id, l3_select_num_bits));
+        out_msg.Destination.add(idToMachineID(MachineType:L1Cache, L1ID));
         out_msg.MessageSize := MessageSizeType:Request_Control;
     }
   }
@@ -546,8 +538,7 @@ assert(false);
         out_msg.Address := address;
         out_msg.Type := CoherenceResponseType:ACK;
         out_msg.Sender := machineID;
-        out_msg.Destination.add(mapAddressToRange(address, MachineType:L1Cache,
-                                                  id, l3_select_num_bits));
+        out_msg.Destination.add(idToMachineID(MachineType:L1Cache, L1ID));
         out_msg.MessageSize := MessageSizeType:Response_Control;
     }
   }
@@ -560,8 +551,7 @@ assert(false);
       out_msg.DataBlk := cache_entry.DataBlk;
       out_msg.Dirty := cache_entry.Dirty;
       out_msg.Requestor:= machineID;
-      out_msg.Destination.add(mapAddressToRange(address, MachineType:L3Cache,
-                                                  l3_select_low_bit, l3_select_num_bits));
+      out_msg.Destination.add(mapAddressToBank(address, MachineType:L3Cache, banks));
       if (cache_entry.Dirty) {
         out_msg.MessageSize := MessageSizeType:Writeback_Data;
       } else {
@@ -578,8 +568,7 @@ peek(responseIntraChipL2Network_in, ResponseMsg) {
       out_msg.DataBlk := in_msg.DataBlk;
       out_msg.Dirty := in_msg.Dirty;
       out_msg.Requestor:= machineID;
-      out_msg.Destination.add(mapAddressToRange(address, MachineType:L3Cache,
-                                                  l3_select_low_bit, l3_select_num_bits));
+      out_msg.Destination.add(mapAddressToBank(address, MachineType:L3Cache, banks));
       if (in_msg.Dirty) {
         out_msg.MessageSize := MessageSizeType:Writeback_Data;
       } else {
@@ -598,8 +587,7 @@ enqueue(requestIntraChipL2Network_out, RequestMsg, latency=l2_response_latency) 
       out_msg.DataBlk := tbe.DataBlk;
       out_msg.Dirty := tbe.Dirty;
       out_msg.Requestor := machineID;
-      out_msg.Destination.add(mapAddressToRange(address, MachineType:L3Cache,
-                                                  l3_select_low_bit, l3_select_num_bits));
+      out_msg.Destination.add(mapAddressToBank(address, MachineType:L3Cache, banks));
       if (tbe.Dirty) {
         out_msg.MessageSize := MessageSizeType:Writeback_Data;
       } else {
@@ -616,10 +604,9 @@ enqueue(requestIntraChipL2Network_out, RequestMsg, latency=l2_response_latency) 
         out_msg.Sender := machineID;
         out_msg.DataBlk := cache_entry.DataBlk;
         out_msg.Dirty := cache_entry.Dirty;
-        out_msg.Destination.add(mapAddressToRange(address, MachineType:L1Cache,
-                                                  id, l3_select_num_bits));
+        out_msg.Destination.add(idToMachineID(MachineType:L1Cache, L1ID));
         out_msg.MessageSize := MessageSizeType:Response_Data;
-        DPRINTF(RubySlicc, "To L1: %s\n", address);
+        DPRINTF(RubySlicc, "To L1 %s (%s): %s\n", L1ID, address);
   }}
 
   action(sendExclusiveDataToL1, desc="send shared data to L1 cache exlusive") {
@@ -784,8 +771,7 @@ action(downgradeL1, desc="...") {
 			out_msg.Type := CoherenceResponseType:DATA;
 			out_msg.Sender := machineID;
 			out_msg.MessageSize := MessageSizeType:Writeback_Data;
-			out_msg.Destination.add(mapAddressToRange(address, MachineType:L3Cache,
-                                                  l3_select_low_bit, l3_select_num_bits));
+      			out_msg.Destination.add(mapAddressToBank(address, MachineType:L3Cache, banks));
 		}
 	}
   }
@@ -799,8 +785,7 @@ action(downgradeL1, desc="...") {
 		out_msg.Type := CoherenceResponseType:DATA;
 		out_msg.Sender := machineID;
 		out_msg.MessageSize := MessageSizeType:Writeback_Data;
-		out_msg.Destination.add(mapAddressToRange(address, MachineType:L3Cache,
-                                        l3_select_low_bit, l3_select_num_bits));
+      		out_msg.Destination.add(mapAddressToBank(address, MachineType:L3Cache, banks));
 	}
   }
 

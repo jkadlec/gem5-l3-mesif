@@ -273,12 +273,9 @@ machine(L3Cache, "MESIF Directory L3 Cache CMP")
     }
   }
 
-  int getPendingAcks(TBE tbe) { //TODO this if is not ok!
-    if (is_valid(tbe)) {
-	    return tbe.pendingAcks;
-    } else {
-            return 0;
-    }
+  int getPendingAcks(TBE tbe) {
+    assert(is_valid(tbe));
+    return tbe.pendingAcks;
   }
 
   bool isDirty(Entry cache_entry) {

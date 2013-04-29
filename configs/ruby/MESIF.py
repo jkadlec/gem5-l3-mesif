@@ -53,7 +53,6 @@ def define_options(parser):
 def create_system(options, system, piobus, dma_ports, ruby_system):
 
     print 'Creating new MESIF-based system:'
-    print options.num_cpus, options.num_l2caches, options.num_l3caches, options.num_dirs
     print 'DMA:', dma_ports
     
     if buildEnv['PROTOCOL'] != 'MESIF':
@@ -81,11 +80,12 @@ def create_system(options, system, piobus, dma_ports, ruby_system):
     block_size_bits = int(math.log(options.cacheline_size, 2))
     
     cntrl_count = 0
-
+    
     print "L2 bits", l2_bits
     print "L3 bits", l3_bits
 
     options.num_l2caches = options.num_cpus
+    print options.num_cpus, options.num_l2caches, options.num_l3caches, options.num_dirs
     
     for i in xrange(options.num_cpus):
         #
@@ -102,8 +102,7 @@ def create_system(options, system, piobus, dma_ports, ruby_system):
                                       cntrl_id = cntrl_count,
                                       L1IcacheMemory = l1i_cache,
                                       L1DcacheMemory = l1d_cache,
-				      L2Offset = options.num_cpus,
-				      id = i,
+				      L2ID = i,
                                       l2_select_num_bits = l2_bits,
                                       send_evictions = (
                                           options.cpu_type == "detailed"),
@@ -143,9 +142,9 @@ def create_system(options, system, piobus, dma_ports, ruby_system):
 
         l2_cntrl = L2Cache_Controller(version = i,
                                       cntrl_id = cntrl_count,
+				      L1ID = i,
+				      banks = options.num_l3caches,
                                       L2cacheMemory = l2_cache,
-				      L2Offset = options.num_cpus,
-				      id = i,
                                       l3_select_num_bits = l3_bits,
                                       ruby_system = ruby_system)
 

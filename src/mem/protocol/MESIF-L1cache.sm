@@ -31,9 +31,8 @@ machine(L1Cache, "MESIF Directory L1 Cache Multicore")
  : Sequencer * sequencer, //handles all incomming requests
    CacheMemory * L1IcacheMemory,
    CacheMemory * L1DcacheMemory,
-   int id,
-   int L2Offset,
-   int l2_select_num_bits, //?
+   int L2ID,
+   int l2_select_num_bits,
    int l1_request_latency = 2,
    int l1_response_latency = 2,
    int to_l2_latency = 1,
@@ -226,6 +225,7 @@ machine(L1Cache, "MESIF Directory L1 Cache Multicore")
   }
 
   int getPendingAcks(TBE tbe) {
+    assert(is_valid(tbe));
     return tbe.pendingAcks;
   }
 
@@ -240,10 +240,10 @@ machine(L1Cache, "MESIF Directory L1 Cache Multicore")
       peek(responseIntraChipL1Network_in, ResponseMsg, block_on="Address") {
         assert(in_msg.Destination.isElement(machineID));
 
-	DPRINTF(RubySlicc, "Response to L1: %s\n", in_msg);
-
         Entry cache_entry := getCacheEntry(in_msg.Address);
         TBE tbe := L1_TBEs[in_msg.Address];
+
+	DPRINTF(RubySlicc, "Response to L1 in state %s : %s\n", getState(tbe, cache_entry, in_msg.Address), in_msg);
 
         if(in_msg.Type == CoherenceResponseType:DATA_EXCLUSIVE) {
           trigger(Event:Data_Exclusive, in_msg.Address, cache_entry, tbe);
@@ -381,10 +381,7 @@ machine(L1Cache, "MESIF Directory L1 Cache Multicore")
         out_msg.Address := address;
         out_msg.Type := CoherenceRequestType:GETS;
         out_msg.Requestor := machineID;
-        out_msg.Destination.add(mapAddressToRange(address, MachineType:L2Cache, //What does mapAddressToRange do?
-                                id + L2Offset, l2_select_num_bits));
-        DPRINTF(RubySlicc, "GETS issued for address: %s, id = %d destination: %s\n",
-                address, id + L2Offset, out_msg.Destination);
+        out_msg.Destination.add(idToMachineID(MachineType:L2Cache, L2ID));
         out_msg.MessageSize := MessageSizeType:Control;
         out_msg.AccessMode := in_msg.AccessMode;
       }
@@ -397,12 +394,8 @@ machine(L1Cache, "MESIF Directory L1 Cache Multicore")
         out_msg.Address := address;
       out_msg.Type := CoherenceRequestType:GET_INSTR;
         out_msg.Requestor := machineID;
-        out_msg.Destination.add(mapAddressToRange(address, MachineType:L2Cache,
-                                                  l2_select_low_bit, l2_select_num_bits));
-        DPRINTF(RubySlicc, "address: %s, destination: %s\n",
-                address, out_msg.Destination);
+        out_msg.Destination.add(idToMachineID(MachineType:L2Cache, L2ID));//L2ID;
         out_msg.MessageSize := MessageSizeType:Control;
-//        out_msg.Prefetch := in_msg.Prefetch;
         out_msg.AccessMode := in_msg.AccessMode;
       }
     }
@@ -415,13 +408,9 @@ machine(L1Cache, "MESIF Directory L1 Cache Multicore")
         out_msg.Address := address;
         out_msg.Type := CoherenceRequestType:GETX;
         out_msg.Requestor := machineID;
-        DPRINTF(RubySlicc, "%s\n", machineID);
-        out_msg.Destination.add(mapAddressToRange(address, MachineType:L2Cache,
-                                                  id + L2Offset, l2_select_num_bits));
-        DPRINTF(RubySlicc, "Issuing GETX for address: %s, destination L2: %s\n",
-                address, out_msg.Destination);
+        out_msg.Destination.add(idToMachineID(MachineType:L2Cache, L2ID));
+        DPRINTF(RubySlicc, "Sending GETX TO %s (%s) \n", L2ID, out_msg.Destination);
         out_msg.MessageSize := MessageSizeType:Control;
-//        out_msg.Prefetch := in_msg.Prefetch;
         out_msg.AccessMode := in_msg.AccessMode;
       }
     }
@@ -433,12 +422,10 @@ machine(L1Cache, "MESIF Directory L1 Cache Multicore")
         out_msg.Address := address;
         out_msg.Type := CoherenceRequestType:UPGRADE;
         out_msg.Requestor := machineID;
-        out_msg.Destination.add(mapAddressToRange(address, MachineType:L2Cache,
-                                                  l2_select_low_bit, l2_select_num_bits));
+        out_msg.Destination.add(idToMachineID(MachineType:L2Cache, L2ID));
         DPRINTF(RubySlicc, "address: %s, destination: %s\n",
                 address, out_msg.Destination);
         out_msg.MessageSize := MessageSizeType:Control;
-//        out_msg.Prefetch := in_msg.Prefetch;
         out_msg.AccessMode := in_msg.AccessMode;
       }
     }
@@ -467,8 +454,7 @@ machine(L1Cache, "MESIF Directory L1 Cache Multicore")
       out_msg.DataBlk := cache_entry.DataBlk;
       out_msg.Dirty := cache_entry.Dirty;
       out_msg.Sender := machineID;
-      out_msg.Destination.add(mapAddressToRange(address, MachineType:L2Cache, // ?? I guess that direct L2 ID has be here. There's just one L2 for each L1
-                                                  l2_select_low_bit, l2_select_num_bits));
+      out_msg.Destination.add(idToMachineID(MachineType:L2Cache, L2ID));
       out_msg.MessageSize := MessageSizeType:Response_Data;
     }
   }
@@ -496,8 +482,7 @@ machine(L1Cache, "MESIF Directory L1 Cache Multicore")
       out_msg.DataBlk := tbe.DataBlk;
       out_msg.Dirty := tbe.Dirty;
       out_msg.Sender := machineID;
-      out_msg.Destination.add(mapAddressToRange(address, MachineType:L2Cache,
-                                                  l2_select_low_bit, l2_select_num_bits));
+      out_msg.Destination.add(idToMachineID(MachineType:L2Cache, L2ID));
       out_msg.MessageSize := MessageSizeType:Response_Data;
     }
   }
@@ -522,8 +507,7 @@ machine(L1Cache, "MESIF Directory L1 Cache Multicore")
       out_msg.DataBlk := cache_entry.DataBlk;
       out_msg.Dirty := cache_entry.Dirty;
       out_msg.Sender := machineID;
-      out_msg.Destination.add(mapAddressToRange(address, MachineType:L2Cache,
-                                                  l2_select_low_bit, l2_select_num_bits));
+      out_msg.Destination.add(idToMachineID(MachineType:L2Cache, L2ID));
       out_msg.MessageSize := MessageSizeType:Writeback_Data;
     }
   }
@@ -536,8 +520,9 @@ machine(L1Cache, "MESIF Directory L1 Cache Multicore")
       out_msg.DataBlk := tbe.DataBlk;
       out_msg.Dirty := tbe.Dirty;
       out_msg.Sender := machineID;
-      out_msg.Destination.add(mapAddressToRange(address, MachineType:L2Cache,
-                                                  l2_select_low_bit, l2_select_num_bits));
+      DPRINTF(RubySlicc, "%s", l2_select_low_bit);
+      assert(false);
+      out_msg.Destination.add(idToMachineID(MachineType:L2Cache, L2ID));
       out_msg.MessageSize := MessageSizeType:Writeback_Data;
     }
   }
@@ -570,8 +555,7 @@ machine(L1Cache, "MESIF Directory L1 Cache Multicore")
       out_msg.DataBlk := cache_entry.DataBlk;
       out_msg.Dirty := cache_entry.Dirty;
       out_msg.Requestor:= machineID;
-      out_msg.Destination.add(mapAddressToRange(address, MachineType:L2Cache,
-                                                  l2_select_low_bit, l2_select_num_bits));
+      out_msg.Destination.add(idToMachineID(MachineType:L2Cache, L2ID));
       if (cache_entry.Dirty) {
         out_msg.MessageSize := MessageSizeType:Writeback_Data;
       } else {
@@ -585,8 +569,7 @@ machine(L1Cache, "MESIF Directory L1 Cache Multicore")
       out_msg.Address := address;
       out_msg.Type := CoherenceResponseType:UNBLOCK;
       out_msg.Sender := machineID;
-      out_msg.Destination.add(mapAddressToRange(address, MachineType:L2Cache,
-                                                  l2_select_low_bit, l2_select_num_bits));
+      out_msg.Destination.add(idToMachineID(MachineType:L2Cache, L2ID));
       out_msg.MessageSize := MessageSizeType:Response_Control;
       DPRINTF(RubySlicc, "%s\n", address);
       
@@ -598,8 +581,7 @@ machine(L1Cache, "MESIF Directory L1 Cache Multicore")
       out_msg.Address := address;
       out_msg.Type := CoherenceResponseType:EXCLUSIVE_UNBLOCK;
       out_msg.Sender := machineID;
-      out_msg.Destination.add(mapAddressToRange(address, MachineType:L2Cache,
-                                                  l2_select_low_bit, l2_select_num_bits));
+      out_msg.Destination.add(idToMachineID(MachineType:L2Cache, L2ID));
       out_msg.MessageSize := MessageSizeType:Response_Control;
       DPRINTF(RubySlicc, "%s\n", address);
 
