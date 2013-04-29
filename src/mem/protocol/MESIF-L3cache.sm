@@ -419,7 +419,7 @@ machine(L3Cache, "MESIF Directory L3 Cache CMP")
         assert(is_valid(cache_entry));
         out_msg.Address := address;
         out_msg.Type := in_msg.Type;
-        out_msg.Requestor := in_msg.Requestor;
+        out_msg.Requestor := machineID;
         out_msg.Destination.add(cache_entry.Exclusive);
         out_msg.MessageSize := MessageSizeType:Request_Control;
       }

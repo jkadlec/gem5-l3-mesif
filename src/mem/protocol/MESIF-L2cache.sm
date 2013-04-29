@@ -303,6 +303,7 @@ machine(L2Cache, "MESIF Directory L2 Cache Multicore")
           }
         }
 	} else {
+			DPRINTF(RubySlicc, "%s\n", in_msg);
 		assert(machineIDToMachineType(in_msg.Requestor) == MachineType:L3Cache);
 		        assert(in_msg.Destination.isElement(machineID));
 
@@ -314,7 +315,6 @@ machine(L2Cache, "MESIF Directory L2 Cache Multicore")
         if (in_msg.Type == CoherenceRequestType:INV) {
           trigger(Event:Inv, in_msg.Address, cache_entry, tbe);
         } else if (in_msg.Type == CoherenceRequestType:GETX || in_msg.Type == CoherenceRequestType:UPGRADE) {
-assert(false);
           // upgrade transforms to GETX due to race
           trigger(Event:Fwd_GETX, in_msg.Address, cache_entry, tbe);
         } else if (in_msg.Type == CoherenceRequestType:GETS) {
