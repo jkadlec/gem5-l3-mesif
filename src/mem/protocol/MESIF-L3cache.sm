@@ -71,7 +71,7 @@ machine(L3Cache, "MESIF Directory L3 Cache CMP")
 
     // Blocking states
     SS_MB, AccessPermission:Busy, desc="Blocked for L2_GETX from SS";
-    MT_MB, AccessPermission:Busy, desc="Blocked for L2_GETX from MT";
+    MT_MB, AccessPermission:Busy, desc="Blocked for L2_GETX from MT"; //Blocks when already in L2, another L2 wants the value
     M_MB, AccessPermission:Busy, desc="Blocked for L2_GETX from M";
 
     MT_IIB, AccessPermission:Busy, desc="Blocked for L2_GETS from MT, waiting for unblock and data";
@@ -419,7 +419,7 @@ machine(L3Cache, "MESIF Directory L3 Cache CMP")
         assert(is_valid(cache_entry));
         out_msg.Address := address;
         out_msg.Type := in_msg.Type;
-        out_msg.Requestor := machineID;
+        out_msg.Requestor := in_msg.Requestor;
         out_msg.Destination.add(cache_entry.Exclusive);
         out_msg.MessageSize := MessageSizeType:Request_Control;
       }
@@ -499,6 +499,12 @@ machine(L3Cache, "MESIF Directory L3 Cache CMP")
           out_msg.AckCount := out_msg.AckCount + 1;
         }
       }
+    }
+  }
+
+  action(xy_assertNotSharer, "xy", desc="...") {
+    peek(L2RequestIntraChipL3Network_in, RequestMsg) {
+	assert(isSharer(in_msg.Address, in_msg.Requestor, cache_entry) == false);
     }
   }
 
@@ -1008,6 +1014,7 @@ machine(L3Cache, "MESIF Directory L3 Cache CMP")
   // transitions from MT
 
   transition(MT, L2_GETX, MT_MB) {
+    xy_assertNotSharer;
     b_forwardRequestToExclusive;
     uu_profileMiss;
     set_setMRU;
