@@ -84,11 +84,11 @@ machine(L1Cache, "MESIF Directory L1 Cache Multicore")
 
     Data,       desc="Data for processor";
     Data_Exclusive,       desc="Data for processor";
-    DataS_fromL1,       desc="data for GETS request, need to unblock directory";
-    Data_all_Acks,       desc="Data for processor, all acks";
+//    DataS_fromL1,       desc="data for GETS request, need to unblock directory";
+//    Data_all_Acks,       desc="Data for processor, all acks";
 
     Ack,        desc="Ack for processor";
-    Ack_all,      desc="Last ack for processor";
+//    Ack_all,      desc="Last ack for processor";
 
     WB_Ack,        desc="Ack for replacement";
   }
@@ -108,7 +108,7 @@ machine(L1Cache, "MESIF Directory L1 Cache Multicore")
     State TBEState,        desc="Transient state";
     DataBlock DataBlk,                desc="Buffer for the data block";
     bool Dirty, default="false",   desc="data is dirty";
-    bool isPrefetch,       desc="Set if this was caused by a prefetch";
+//    bool isPrefetch,       desc="Set if this was caused by a prefetch";
     int pendingAcks, default="0", desc="number of pending acks";
   }
 
@@ -245,31 +245,19 @@ machine(L1Cache, "MESIF Directory L1 Cache Multicore")
 
 	DPRINTF(RubySlicc, "Response to L1 in state %s : %s\n", getState(tbe, cache_entry, in_msg.Address), in_msg);
 
-        if(in_msg.Type == CoherenceResponseType:DATA_EXCLUSIVE) {
-          trigger(Event:Data_Exclusive, in_msg.Address, cache_entry, tbe);
-        } else if(in_msg.Type == CoherenceResponseType:DATA) {
-          if ((getState(tbe, cache_entry, in_msg.Address) == State:IS ||
-               getState(tbe, cache_entry, in_msg.Address) == State:IS_I) && //this will never happen TODO!!!!!!!!!!!!!!!!!!!!!!!
-              machineIDToMachineType(in_msg.Sender) == MachineType:L1Cache) {
-
-              trigger(Event:DataS_fromL1, in_msg.Address, cache_entry, tbe);
-
-          } else if ( (getPendingAcks(tbe) - in_msg.AckCount) == 0 ) {
-            trigger(Event:Data_all_Acks, in_msg.Address, cache_entry, tbe);
-          } else {
-            trigger(Event:Data, in_msg.Address, cache_entry, tbe);
-          }
-        } else if (in_msg.Type == CoherenceResponseType:ACK) {
-          if ( (getPendingAcks(tbe) - in_msg.AckCount) == 0 ) {
-            trigger(Event:Ack_all, in_msg.Address, cache_entry, tbe);
-          } else {
-            trigger(Event:Ack, in_msg.Address, cache_entry, tbe);
-          }
+	//simplyfied L1 only receives data and WB_ACK
+        if(in_msg.Type == CoherenceResponseType:DATA) {
+	  trigger(Event:Data, in_msg.Address, cache_entry, tbe);
+	} else if (in_msg.Type == CoherenceResponseType:DATA_EXCLUSIVE) {
+	  trigger(Event:Data_Exclusive, in_msg.Address, cache_entry, tbe);
         } else if (in_msg.Type == CoherenceResponseType:WB_ACK) {
           trigger(Event:WB_Ack, in_msg.Address, cache_entry, tbe);
-        } else {
-          error("Invalid L1 response type");
-        }
+	} else if (in_msg.Type == CoherenceResponseType:ACK) {
+          trigger(Event:Ack, in_msg.Address, cache_entry, tbe);
+	} else {
+	  DPRINTF(RubySlicc, "%s\n", in_msg);
+	  error("invalid response");
+	}
       }
     }
   }
@@ -596,8 +584,9 @@ machine(L1Cache, "MESIF Directory L1 Cache Multicore")
 
   action(hh_store_hit, "\h", desc="If not prefetch, notify sequencer that store completed.") {
     assert(is_valid(cache_entry));
-    DPRINTF(RubySlicc, "Store hit: %s\n", cache_entry.DataBlk);
+    DPRINTF(RubySlicc, "Before store hit: %s\n", cache_entry.DataBlk);
     sequencer.writeCallback(address, cache_entry.DataBlk);
+    DPRINTF(RubySlicc, "After store hit: %s\n", cache_entry.DataBlk);
     cache_entry.Dirty := true;
   }
 
@@ -669,6 +658,10 @@ machine(L1Cache, "MESIF Directory L1 Cache Multicore")
 
   action(z_stallAndWaitMandatoryQueue, "\z", desc="recycle L1 request queue") {
     stall_and_wait(mandatoryQueue_in, address);
+  }
+
+  action(z_stallAndWaitRequestQueue, "\za", desc="recycle L1 request queue") {
+    stall_and_wait(requestIntraChipL1Network_in, address);
   }
 
   action(kd_wakeUpDependents, "kd", desc="wake-up dependents") {
@@ -862,7 +855,15 @@ machine(L1Cache, "MESIF Directory L1 Cache Multicore")
     l_popRequestQueue;
   }
 
-  transition(IS, Data_all_Acks, S) { // all acks for address, we can use it now
+//  transition(IS, Data_all_Acks, S) { // all acks for address, we can use it now
+//    u_writeDataToL1Cache;
+//    h_load_hit;
+//    s_deallocateTBE;
+//    o_popIncomingResponseQueue;
+//    kd_wakeUpDependents;
+//  }
+
+  transition(IS, Data, S) { // all acks for address, we can use it now
     u_writeDataToL1Cache;
     h_load_hit;
     s_deallocateTBE;
@@ -870,7 +871,7 @@ machine(L1Cache, "MESIF Directory L1 Cache Multicore")
     kd_wakeUpDependents;
   }
 
-  transition(IS_I, Data_all_Acks, I) { //all acks for address, we can drop it now
+  transition(IS_I, Data, I) { //all acks for address, we can drop it now
     u_writeDataToL1Cache;
     h_load_hit;
     s_deallocateTBE;
@@ -878,72 +879,81 @@ machine(L1Cache, "MESIF Directory L1 Cache Multicore")
     kd_wakeUpDependents;
   }
 
-  transition(IS, DataS_fromL1, S) { //
-    u_writeDataToL1Cache;
-    j_sendUnblock;
-    h_load_hit;
-    s_deallocateTBE;
-    o_popIncomingResponseQueue;
-    kd_wakeUpDependents;
-  }
+//  transition(IS, DataS_fromL1, S) { //
+//    u_writeDataToL1Cache;
+//    j_sendUnblock;
+//    h_load_hit;
+//    s_deallocateTBE;
+//    o_popIncomingResponseQueue;
+//    kd_wakeUpDependents;
+//  }
 
-  transition(IS_I, DataS_fromL1, I) {
-    u_writeDataToL1Cache;
-    j_sendUnblock;
-    h_load_hit;
-    s_deallocateTBE;
-    o_popIncomingResponseQueue;
-    kd_wakeUpDependents;
-  }
+//  transition(IS_I, DataS_fromL1, I) {
+//    u_writeDataToL1Cache;
+//    j_sendUnblock;
+//    h_load_hit;
+//    s_deallocateTBE;
+//    o_popIncomingResponseQueue;
+//    kd_wakeUpDependents;
+//  }
 
   // directory is blocked when sending exclusive data - why?
-  transition(IS_I, Data_Exclusive, E) {
+  transition(IS_I, Data_Exclusive, E) { 
     u_writeDataToL1Cache;
     h_load_hit;
-    jj_sendExclusiveUnblock;
+//    jj_sendExclusiveUnblock;
     s_deallocateTBE;
     o_popIncomingResponseQueue;
     kd_wakeUpDependents;
   }
 
-  transition(IS, Data_Exclusive, E) {
-    u_writeDataToL1Cache;
-    h_load_hit;
-    jj_sendExclusiveUnblock;
-    s_deallocateTBE;
-    o_popIncomingResponseQueue;
-    kd_wakeUpDependents;
-  }
+//  transition(IS, Data_Exclusive, E) {
+//    u_writeDataToL1Cache;
+//    h_load_hit;
+//    jj_sendExclusiveUnblock;
+//    s_deallocateTBE;
+//    o_popIncomingResponseQueue;
+//    kd_wakeUpDependents;
+//  }
 
   // Transitions from IM
-  transition({IM, SM}, Inv, IM) {
-    fi_sendInvAck;
-    l_popRequestQueue;
+  transition({IM, SM}, Inv, IM) { //TODO used to be invack
+//    fi_sendInvAck;
+    z_stallAndWaitRequestQueue;
   }
 
-  transition(IM, Data, SM) {
-    u_writeDataToL1Cache;
-    q_updateAckCount;
-    o_popIncomingResponseQueue;
-  }
+//  transition(IM, Data, SM) {
+//    u_writeDataToL1Cache;
+//    q_updateAckCount;
+//    o_popIncomingResponseQueue;
+//  }
 
-  transition(IM, Data_all_Acks, M) {
+  //simlified version
+  transition(IM, Data, M) {
     u_writeDataToL1Cache;
     hh_store_hit;
-    jj_sendExclusiveUnblock;
     s_deallocateTBE;
     o_popIncomingResponseQueue;
     kd_wakeUpDependents;
   }
 
-  // transitions from SM
-  transition({SM, IM}, Ack) {
-    q_updateAckCount;
-    o_popIncomingResponseQueue;
-  }
 
-  transition(SM, Ack_all, M) {
-    jj_sendExclusiveUnblock;
+//  transition(IM, Data_all_Acks, M) {
+//    u_writeDataToL1Cache;
+//    hh_store_hit;
+//    jj_sendExclusiveUnblock;
+//    s_deallocateTBE;
+//    o_popIncomingResponseQueue;
+//    kd_wakeUpDependents;
+//  }
+
+  // transitions from SM
+//  transition({SM, IM}, Ack) {
+//    q_updateAckCount;
+//    o_popIncomingResponseQueue;
+//  }
+
+  transition(SM, Ack, M) {
     hh_store_hit;
     s_deallocateTBE;
     o_popIncomingResponseQueue;
