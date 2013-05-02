@@ -413,6 +413,7 @@ machine(L2Cache, "MESIF Directory L2 Cache Multicore")
         out_msg.Type := in_msg.Type;
         out_msg.Requestor := machineID;
         out_msg.DataBlk := in_msg.DataBlk;
+        out_msg.Dirty := in_msg.Dirty;
         out_msg.Destination.add(mapAddressToBank(address, MachineType:L3Cache, banks));
         DPRINTF(RubySlicc, "Relay to L3 for: address: %s, destination: %s, type %s\n",
                 address, out_msg.Destination, in_msg.Type);
@@ -430,6 +431,7 @@ machine(L2Cache, "MESIF Directory L2 Cache Multicore")
         out_msg.Type := in_msg.Type;
         out_msg.Sender := machineID;
         out_msg.DataBlk := in_msg.DataBlk;
+        out_msg.Dirty := in_msg.Dirty;
         out_msg.Destination.add(mapAddressToBank(address, MachineType:L3Cache, banks));
         DPRINTF(RubySlicc, "Relay for: address: %s, destination: %s\n",
                 address, out_msg.Destination);
@@ -669,7 +671,6 @@ enqueue(requestIntraChipL2Network_out, RequestMsg, latency=l2_response_latency) 
 
   action(i_allocateTBE, "i", desc="Allocate TBE (isPrefetch=0, number of invalidates=0)") {
     check_allocate(L2_TBEs);
-    assert(is_valid(cache_entry));
     L2_TBEs.allocate(address);
     set_tbe(L2_TBEs[address]);
     tbe.Dirty := cache_entry.Dirty;
@@ -813,8 +814,8 @@ action(downgradeL1, desc="...") {
 	peek(requestIntraChipL2Network_in, RequestMsg) {
 		enqueue(responseIntraChipL2Network_out, ResponseMsg) {
 			out_msg.Address := in_msg.Address;
-			out_msg.Dirty := in_msg.Dirty;
 			out_msg.DataBlk := in_msg.DataBlk;
+        		out_msg.Dirty := in_msg.Dirty;
 			out_msg.Type := CoherenceResponseType:DATA;
 			out_msg.Sender := machineID;
 			out_msg.MessageSize := MessageSizeType:Writeback_Data;
@@ -892,9 +893,9 @@ assert(false);
   // L1 needs data/instruction
   transition(I, {L1_GETS, L1_GET_INSTR}, IS) {
     a_relayRequestToL3;
-    oo_allocateL2CacheBlock;
-    uu_profileDataMiss;
+    oo_allocateL2CacheBlock; // do i need this here, or on hit?
     i_allocateTBE;
+    uu_profileDataMiss;
     popRequestQueue;
   }
   
@@ -983,8 +984,8 @@ assert(false);
   transition(IS, Data_L3, SS) { //Got data from L3, relaying to L1
     u_writeDataToL2CacheFromRespobse;
     sendResponseToL1;
-    popResponseQueue;
     s_deallocateTBE;
+    popResponseQueue;
     kd_wakeUpDependents;
   }
 
@@ -1201,6 +1202,14 @@ assert(false);
 
   transition(SS_II, Ack, I) { // L1 copy invalidated, we can go to invalid
     s_deallocateTBE;
+    popResponseQueue;
+  }
+
+  transition(SS_II, Inv) { // eh?
+    die;
+  }
+
+  transition(IS, WB_Ack) { // lost race TODO really?
     popResponseQueue;
   }
 
