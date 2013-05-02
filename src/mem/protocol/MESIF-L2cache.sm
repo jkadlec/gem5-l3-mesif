@@ -1067,9 +1067,10 @@ assert(false);
     kd_wakeUpDependents;
   }
 
-  transition(EX_IWB_SELF, {Fwd_GETX}) {
-     sendDataToImmediateRequestor_fromTBE;
-     popRequestQueue;
+  transition(EX_IWB_SELF, {Fwd_GETX}) { // cannot send until writeback arrives!
+//     sendDataToImmediateRequestor_fromTBE;
+//     popRequestQueue;
+    stall_incoming_l1_requests
   }
 
   transition({EX_IACK, EX_IACK_NO_PUTX}, Ack) { // Lost a race with L1, PUTX issued by L1, but Inv got the L1 anyway and now it sends an Ack
