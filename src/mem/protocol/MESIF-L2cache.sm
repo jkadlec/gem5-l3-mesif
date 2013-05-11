@@ -59,6 +59,7 @@ machine(L2Cache, "MESIF Directory L2 Cache Multicore")
     IS_I, AccessPermission:Busy, desc="L2 idle, issued GETS relay, have not seen response yet";
     IX, AccessPermission:Busy, desc="L2 idle, issued GETX relay, have not seen response yet";
     SS_I, AccessPermission:Busy, desc="L2 replacing, waiting for InvAck from L1";
+    SS_I_INV, AccessPermission:Busy, desc="L2 replacing, waiting for InvAck from L1";
     SS_II, AccessPermission:Busy, desc="L2 invalidated, waiting for InvAck from L1";
     EX_IWB, AccessPermission:Busy, desc="L2 invalidated, waiting for WB Data from L1";
     EX_IWB_SELF, AccessPermission:Busy, desc="L2 replacing, waiting for WB Data from L1";
@@ -514,6 +515,7 @@ machine(L2Cache, "MESIF Directory L2 Cache Multicore")
 }
   }
 
+
   action(d2t_sendDataToL3_fromTBE, "d2t", desc="send data to the L3 cache") { // This will stay
     enqueue(responseIntraChipL2Network_out, ResponseMsg, latency=l2_response_latency) {
       assert(is_valid(tbe));
@@ -566,6 +568,18 @@ machine(L2Cache, "MESIF Directory L2 Cache Multicore")
       }
     }
   }
+
+
+  action(fi_sendInvAckToL3, "fia", desc="send data to the L3 cache") {
+      enqueue(responseIntraChipL2Network_out, ResponseMsg, latency=l2_response_latency) {
+        out_msg.Address := address;
+        out_msg.Type := CoherenceResponseType:ACK;
+        out_msg.Sender := machineID;
+        out_msg.Destination.add(mapAddressToBank(address, MachineType:L3Cache, banks));
+        out_msg.MessageSize := MessageSizeType:Response_Control;
+        out_msg.AckCount := 1;
+  }
+}
 
   action(sendInvToL1, "fii", desc="send Inv to the L1 cache") {
       enqueue(requestIntraChipL2Network_out, RequestMsg, latency=l2_response_latency) {
@@ -1159,7 +1173,7 @@ assert(false);
     popResponseQueue;
   }
 
-  transition(EX_IACK, {L1_GETX, L1_GETS, L1_GET_INSTR}) { // L1 wants previously removed value, we have to stall until L3 writeback is done
+  transition({EX_IACK, EX_IACK_NO_PUTX}, {L1_GETX, L1_GETS, L1_GET_INSTR}) { // L1 wants previously removed value, we have to stall until L3 writeback is done
     stall_incoming_l1_requests;
   }
 
@@ -1188,12 +1202,27 @@ assert(false);
     kd_wakeUpDependents;
   }
 
+  transition(EX_IWB_SELF_NO_PUTX, Ack, EX_IACK_NO_PUTX) {
+    popResponseQueue;
+    sendWBDataToL3FromTBE;
+    kd_wakeUpDependents;
+  }
+
   
-  transition(SS, Inv, SS_II) { // Can inv ack straight away
+  transition(SS, Inv, SS_I_INV) { 
     sendInvToL1;
-    fi_sendInvAck;
     i_allocateTBE;
     ff_deallocateL2CacheBlock;
+    popRequestQueue;
+  }
+
+  transition(SS_I_INV, Ack, I) {
+    fi_sendInvAckToL3;
+    s_deallocateTBE;
+    popResponseQueue;
+  }
+
+  transition(SS_I_INV, Inv) {  // ??? oh man, why does this happen. Only when multiple L2s...
     popRequestQueue;
   }
 
@@ -1209,6 +1238,12 @@ assert(false);
   transition(SS_II, Inv) { // eh?
     die;
   }
+
+
+
+
+
+//TODOOTASOFDSAOFSAODFASOFAOSFOSADFO SADOFSODAFASOFDA l3 nejriv rekne, kolik ma prijit acku a az pak zacnou chodit?
 
   transition(IS, WB_Ack) { // lost race TODO really?
     popResponseQueue;
@@ -1271,8 +1306,13 @@ assert(false);
     stall_incoming_l1_requests;
   }
 
-  transition(EX_IACK, Fwd_GETX) {
+  transition(EX_IACK, {Fwd_GET_INSTR, Fwd_GETS}) {
     sendDataToImmediateRequestor_fromTBE;
+    popRequestQueue;
+  }
+
+  transition(EX_IACK, {Fwd_GETX}) { 
+    sendDataToImmediateRequestor_fromTBE; // send exclusive?
     popRequestQueue;
   }
 

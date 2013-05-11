@@ -93,10 +93,6 @@ machine(L3Cache, "MESIF Directory L3 Cache CMP")
     L2_PUTX,                 desc="L2 replacing data";
     L2_PUTX_old,             desc="L2 replacing data, but no longer sharer";
 
-    Fwd_L2_GETX,             desc="L2 did not have data, so we supply";
-    Fwd_L2_GETS,             desc="L2 did not have data, so we supply";
-    Fwd_L2_GET_INSTR,             desc="L2 did not have data, so we supply";
-
     // events initiated by this L3
     L3_Replacement,     desc="L3 Replacement", format="!r";
     L3_Replacement_clean,     desc="L3 Replacement, but data is clean", format="!r";
@@ -398,6 +394,90 @@ machine(L3Cache, "MESIF Directory L3 Cache CMP")
 
 
   // ACTIONS
+
+
+  action(f_sendUnblock, "f", desc="Send unblock to global directory") {
+    enqueue(responseNetwork_out, ResponseMsg, latency=response_latency) {
+      out_msg.Address := address;
+      out_msg.Type := CoherenceResponseType:UNBLOCK;
+      out_msg.Destination.add(map_Address_to_Directory(address));
+      out_msg.Sender := machineID;
+      out_msg.SenderMachine := MachineType:L2Cache;
+      out_msg.MessageSize := MessageSizeType:Unblock_Control;
+    }
+  }
+
+
+  action(f_sendExclusiveUnblock, "\f", desc="Send unblock to global directory") {
+    enqueue(responseNetwork_out, ResponseMsg, latency=response_latency) {
+      out_msg.Address := address;
+      out_msg.Type := CoherenceResponseType:UNBLOCK_EXCLUSIVE;
+      out_msg.Destination.add(map_Address_to_Directory(address));
+      out_msg.Sender := machineID;
+      out_msg.SenderMachine := MachineType:L2Cache;
+      out_msg.MessageSize := MessageSizeType:Unblock_Control;
+    }
+  }
+
+  action( qq_sendDataFromTBEToMemory, "qq", desc="Send data from TBE to directory") {
+    enqueue(responseNetwork_out, ResponseMsg, latency=response_latency) {
+      assert(is_valid(tbe));
+      out_msg.Address := address;
+      out_msg.Sender := machineID;
+      out_msg.SenderMachine := MachineType:L2Cache;
+      out_msg.Destination.add(map_Address_to_Directory(address));
+      out_msg.Dirty := tbe.Dirty;
+      if (tbe.Dirty) {
+        out_msg.Type := CoherenceResponseType:WRITEBACK_DIRTY_DATA;
+        out_msg.DataBlk := tbe.DataBlk;
+        out_msg.MessageSize := MessageSizeType:Writeback_Data;
+      } else {
+         out_msg.Type := CoherenceResponseType:WRITEBACK_CLEAN_ACK;
+        // NOTE: in a real system this would not send data.  We send
+        // data here only so we can check it at the memory
+         out_msg.DataBlk := tbe.DataBlk;
+         out_msg.MessageSize := MessageSizeType:Writeback_Control;
+      }
+    }
+  }
+
+  action(a_issueGETS, "a", desc="issue local request globally") {
+    peek(L1requestNetwork_in, RequestMsg) {
+      enqueue(globalRequestNetwork_out, RequestMsg, latency=request_latency) {
+        out_msg.Address := address;
+        out_msg.Type := CoherenceRequestType:GETS;
+        out_msg.RequestorMachine := MachineType:L2Cache;
+        out_msg.Requestor := machineID;
+        out_msg.Destination.add(map_Address_to_Directory(address));
+        out_msg.MessageSize := MessageSizeType:Request_Control;
+      }
+    }
+  }
+
+  action(a_issueGETX, "\a", desc="issue local request globally") {
+    peek(L1requestNetwork_in, RequestMsg) {
+      enqueue(globalRequestNetwork_out, RequestMsg, latency=request_latency) {
+        out_msg.Address := address;
+        out_msg.Type := CoherenceRequestType:GETX;
+        out_msg.RequestorMachine := MachineType:L2Cache;
+        out_msg.Requestor := machineID;
+        out_msg.Destination.add(map_Address_to_Directory(address));
+        out_msg.MessageSize := MessageSizeType:Request_Control;
+      }
+    }
+  }
+
+  action(b_issuePUTX, "b", desc="Issue PUTX") {
+    enqueue(globalRequestNetwork_out, RequestMsg, latency=request_latency) {
+      out_msg.Address := address;
+      out_msg.Type := CoherenceRequestType:PUTX;
+      out_msg.RequestorMachine := MachineType:L2Cache;
+      out_msg.Requestor := machineID;
+      out_msg.Destination.add(map_Address_to_Directory(address));
+      out_msg.MessageSize := MessageSizeType:Writeback_Control;
+    }
+  }
+
 
   action(a_issueFetchToMemory, "a", desc="fetch data from memory") {
     peek(L2RequestIntraChipL3Network_in, RequestMsg) {
