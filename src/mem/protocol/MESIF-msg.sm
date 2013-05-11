@@ -56,6 +56,9 @@ enumeration(CoherenceResponseType, desc="...") {
   UNBLOCK,         desc="unblock";
   EXCLUSIVE_UNBLOCK,         desc="exclusive unblock";
   INV, desc="Invalidate from directory";
+  WRITEBACK_DIRTY_DATA, desc="";
+  WRITEBACK_CLEAN_ACK, desc="";
+  DMA_ACK, desc="DMA ack";
 }
 
 // RequestMsg
@@ -64,6 +67,7 @@ structure(RequestMsg, desc="...", interface="NetworkMessage") {
   CoherenceRequestType Type,    desc="Type of request (GetS, GetX, PutX, etc)";
   RubyAccessMode AccessMode,    desc="user/supervisor access type";
   MachineID Requestor      ,    desc="What component request";
+  MachineType RequestorMachine,     desc="What component sent the data";
   NetDest Destination,          desc="What components receive the request, includes MachineType and num";
   MessageSizeType MessageSize,  desc="size category of the message";
   DataBlock DataBlk,            desc="Data for the cache line (if PUTX)";
@@ -77,6 +81,7 @@ structure(ResponseMsg, desc="...", interface="NetworkMessage") {
   Address Address,              desc="Physical address for this request";
   CoherenceResponseType Type,   desc="Type of response (Ack, Data, etc)";
   MachineID Sender,             desc="What component sent the data";
+  MachineType SenderMachine,     desc="What component sent the data";
   NetDest Destination,          desc="Node to whom the data is sent";
   DataBlock DataBlk,            desc="Data for the cache line";
   bool Dirty, default="false",  desc="Dirty bit";
