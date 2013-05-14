@@ -292,7 +292,8 @@ machine(L2Cache, "MESIF Directory L2 Cache Multicore")
 	DPRINTF(RubySlicc, "This line in L2: %s\n", cache_entry);
 	DPRINTF(RubySlicc, "This line in L2 (TBE): %s\n", tbe);
 
-       if (is_valid(cache_entry) || in_msg.Type == CoherenceRequestType:PUTX || getState(tbe, cache_entry, in_msg.Address) == State:EX_IACK || getState(tbe, cache_entry, in_msg.Address) == State:EX_IACK_NO_PUTX) { // no need to allocate on PUTX, or when in EX_IACK or some other TODO states!
+//       if (is_valid(cache_entry) || in_msg.Type == CoherenceRequestType:PUTX || getState(tbe, cache_entry, in_msg.Address) == State:EX_IACK || getState(tbe, cache_entry, in_msg.Address) == State:EX_IACK_NO_PUTX) { // no need to allocate on PUTX, or when in EX_IACK or some other TODO states!
+       if (is_valid(cache_entry)) {
           // The L2 contains the block, so proceeded with handling the request
           trigger(L1Cache_request_type_to_event(in_msg.Type, in_msg.Address,
                                                 in_msg.Requestor, cache_entry),
@@ -437,22 +438,6 @@ machine(L2Cache, "MESIF Directory L2 Cache Multicore")
         out_msg.DataBlk := in_msg.DataBlk;
         out_msg.Dirty := in_msg.Dirty;
         out_msg.Destination.add(mapAddressToBank(address, MachineType:L3Cache, low_bit, num_bits));
-        DPRINTF(RubySlicc, "Relay for: address: %s, destination: %s\n",
-                address, out_msg.Destination);
-        out_msg.MessageSize := in_msg.MessageSize;
-      }
-    }
-  }
-
-  action(a_relayResponseToL1, "ax", desc="Relay normal response to L1") {
-    peek(responseIntraChipL2Network_in, ResponseMsg) {
-      enqueue(responseIntraChipL2Network_out, ResponseMsg, latency=l2_request_latency) { // Insert into queue, IntraChip
-        out_msg.Address := address;
-        out_msg.Type := in_msg.Type;
-        out_msg.Sender := machineID;
-        out_msg.DataBlk := in_msg.DataBlk;
-        out_msg.Dirty := in_msg.Dirty;
-        out_msg.Destination.add(idToMachineID(MachineType:L1Cache, L1ID));
         DPRINTF(RubySlicc, "Relay for: address: %s, destination: %s\n",
                 address, out_msg.Destination);
         out_msg.MessageSize := in_msg.MessageSize;
@@ -671,7 +656,6 @@ enqueue(requestIntraChipL2Network_out, RequestMsg, latency=l2_response_latency) 
   }}
 
   action(sendExclusiveDataToL1, desc="send shared data to L1 cache exlusive") {
-    peek(requestIntraChipL2Network_in, RequestMsg) {
 //some assert here
       enqueue(responseIntraChipL2Network_out, ResponseMsg) {
         out_msg.Address := address;
@@ -679,11 +663,10 @@ enqueue(requestIntraChipL2Network_out, RequestMsg, latency=l2_response_latency) 
         out_msg.DataBlk := cache_entry.DataBlk;
         out_msg.Dirty := cache_entry.Dirty;
         out_msg.Sender := machineID;
-        out_msg.Destination.add(in_msg.Requestor);
+        out_msg.Destination.add(idToMachineID(MachineType:L1Cache, L1ID));
         out_msg.MessageSize := MessageSizeType:Response_Data; //used to be control?
         DPRINTF(RubySlicc, "%s\n", address);
       }
-    }
   }
 
   action(i_allocateTBE, "i", desc="Allocate TBE (isPrefetch=0, number of invalidates=0)") {
@@ -952,13 +935,18 @@ assert(false);
     popRequestQueue;
   }
 
-  transition(SS_X, Ack, EX) {
-	sendAckToL1;
+  transition(SS_X, {Data_L3, Ack}, EX) {
+	sendExclusiveDataToL1;
 	popResponseQueue;
      s_deallocateTBE;
 	jj_sendExclusiveUnblock;
 	kd_wakeUpDependents;
   }
+
+  transition(SS_X, Inv, IX) {
+fi_sendInvAckToL3;
+popRequestQueue;
+} 
 
   // L1 does not have the value, L3 has clean copy, we can do silent transition
   transition(S, L2_Replacement, I) { // Just L1, L3 can keep the value
@@ -979,6 +967,7 @@ assert(false);
   transition(SS_I, Ack, I) { // L1 copy invalidated, we can do silent transition.
     s_deallocateTBE;
     popResponseQueue;
+kd_wakeUpDependents;
   }
 
   transition(SS_I, Inv, SS_I_INV) { // Already invalidating
@@ -986,17 +975,12 @@ assert(false);
   }
 
   transition(ES, {L1_GETS, L1_GET_INSTR}, EX) { //Well, I could add an extra state here, L1 no longer wants to modify this value, but it might still be stale
-    sendResponseToL1;
-    popRequestQueue;
-  }
-
-  transition(EX, {L1_GETX, L1_GETS, L1_GET_INSTR}) { // This is caused by transition above. L1 was in S state, but we didn't know it here and it got invalidated, which can be silent and now it wants the value again.
-    sendResponseToL1;
+    sendExclusiveDataToL1;
     popRequestQueue;
   }
 
   transition(ES, L1_GETX, EX) { //Respond to L1, transition to a state with shared M value
-    sendResponseToL1;
+    sendExclusiveDataToL1;
     popRequestQueue;
   }
 
@@ -1010,7 +994,7 @@ assert(false);
 
   transition(IS, Data_Exclusive_L3, EX) { //Got data from L3, relaying to L1
     u_writeDataToL2CacheFromRespobse;
-    sendResponseToL1; //TODO Send exclusive response data!
+    sendExclusiveDataToL1;
     popResponseQueue;
     s_deallocateTBE;
     jj_sendExclusiveUnblock;
@@ -1036,7 +1020,7 @@ assert(false);
   transition(IX, Data_L3, EX) { //Got data from L3, relaying to L1, UNBLOCK!!!
     u_writeDataToL2CacheFromRespobse;
     s_deallocateTBE;
-    sendResponseToL1;
+    sendExclusiveDataToL1;
     popResponseQueue;
     jj_sendExclusiveUnblock;
     kd_wakeUpDependents;
@@ -1068,10 +1052,12 @@ assert(false);
     popRequestQueue;
   }
 
-  transition(EX_IWB, L1_PUTX, EX_IACK) { // L1 wanted eviction *before* we send Inv, relay PUTX with data to L3 and wait for WB_ACK
+  transition(EX_IWB, L1_PUTX, I) { // L1 wanted eviction *before* we send Inv, relay PUTX with data to L3 and wait for WB_ACK
     writeDataToTBEFromRequest;
     sendWBDataFromL1PUTX;
     t_sendWBAckFromRequest;
+s_deallocateTBE;
+kd_wakeUpDependents;
     popRequestQueue;
   }
 
@@ -1079,6 +1065,8 @@ assert(false);
     writeDataToTBEFromRequest;
     sendDataToRequestor_fromTBE;
     t_sendWBAckFromRequest;
+s_deallocateTBE;
+kd_wakeUpDependents;
     popRequestQueue;
   }
 
@@ -1087,7 +1075,6 @@ assert(false);
     a_relayRequestToL3;
     t_sendWBAckFromRequest;
     popRequestQueue;
-    kd_wakeUpDependents;
   }
 
   transition(EX_IWB_SELF, {Fwd_GETX}) { // cannot send until writeback arrives!
@@ -1100,11 +1087,12 @@ assert(false);
     popResponseQueue;
   }
 
-  transition(EX_IWB, {WB_Data, WB_Data_clean}, EX_IACK) { // Writeback data from L1 after Invalidation, waiting for L3 Inv Ack, L1 does not want a WB_ACK
+  transition(EX_IWB, {WB_Data, WB_Data_clean}, I) { // Writeback data from L1 after Invalidation, waiting for L3 Inv Ack, L1 does not want a WB_ACK
 //    t_sendWBAckFromResponse;
     writeDataToTBEFromResponse;
     sendWBDataToL3FromTBE;
     popResponseQueue;
+s_deallocateTBE;
     kd_wakeUpDependents;
   }
 
@@ -1113,27 +1101,23 @@ assert(false);
 //    t_sendWBAckFromResponse;
     issuePUTXfromTBE;
     popResponseQueue;
-    kd_wakeUpDependents;
   }
 
   transition(EX_IWB_SELF_NO_PUTX, {WB_Data, WB_Data_clean}, I) {
     writeDataToTBEFromResponse;
     sendWBDataToL3FromTBE;
     t_sendWBAckFromResponse;
+s_deallocateTBE;
+kd_wakeUpDependents;
     popResponseQueue;
-    kd_wakeUpDependents;
   }
 
-  transition(EX_IWB_SELF_NO_PUTX, L1_PUTX, EX_IACK_NO_PUTX) {
+  transition(EX_IWB_SELF_NO_PUTX, L1_PUTX, I) {
     writeDataToTBEFromRequest;
     sendWBDataToL3FromTBE;
     t_sendWBAckFromRequest;
-    popRequestQueue;
-    kd_wakeUpDependents;
-  }
-
-  transition(EX_IACK_NO_PUTX, Inv) { // L3 wants to invalidate while we wait for WB_ACK from it, we can just do nothing and it will deal with this situation, since we've already sent WB_DATA
-//    ft_sendWritebackDataToL3_fromTBE;
+s_deallocateTBE;
+kd_wakeUpDependents;
     popRequestQueue;
   }
 
@@ -1142,7 +1126,7 @@ assert(false);
     popRequestQueue;
   }
 
-  transition({EX_IWB_SELF}, Inv, EX_IWB_SELF_NO_PUTX) { // We cannot invalidate until response with Write Back data from L1 arrives
+  transition({EX_IWB_SELF}, Inv, EX_IWB) { // We cannot invalidate until response with Write Back data from L1 arrives
     popRequestQueue;
   }
 
@@ -1168,9 +1152,8 @@ assert(false);
     stall_incoming_l1_requests;
   }
 
-  transition(ES, Inv, EX_IACK) { // Cannot be silent, value potentially stale
+  transition(ES, Inv, I) { // Cannot be silent, value potentially stale
     f_sendDataToL3;
-    i_allocateTBE;
     ff_deallocateL2CacheBlock;
     popRequestQueue;
   }
@@ -1201,28 +1184,22 @@ assert(false);
     popResponseQueue;
   }
 
-  transition(EX_IWB, Ack, EX_IACK) { // this means that L1 did not do any changes to the value given. Or it was in the IM state!!!!!!!!!!!!!!
-    sendWBDataToL3FromTBE;
-	t_sendWBAckFromResponse;
+  transition(EX_IWB, Ack) { // this means that L1 did not do any changes to the value given. Or it was in the IM state!!!!!!!!!!!!!!
+//    sendWBDataToL3FromTBE;
+//	t_sendWBAckFromResponse;
     popResponseQueue;
+//s_deallocateTBE;
+//kd_wakeUpDependents;
   }
 
-  transition(EX_IWB_SELF, Ack, EX_IACK) { // this means that L1 did not do any changes to the value given. Or it was in the IM state!!!!!!!!!!!!!!
+  transition({EX_IWB_SELF, EX_IWB_SELF_NO_PUTX}, Ack) { // this means that L1 did not do any changes to the value given. Or it was in the IM state!!!!!!!!!!!!!!
 //    sendWBDataToL3FromTBE
-    issuePUTXfromTBE;
-	t_sendWBAckFromResponse;
+//    issuePUTXfromTBE;
+//	t_sendWBAckFromResponse;
     popResponseQueue;
-    kd_wakeUpDependents;
+//    kd_wakeUpDependents;
   }
 
-  transition(EX_IWB_SELF_NO_PUTX, Ack, EX_IACK_NO_PUTX) {
-    sendWBDataToL3FromTBE;
-    kd_wakeUpDependents;
-	t_sendWBAckFromResponse;
-    popResponseQueue;
-  }
-
-  
   transition(SS, Inv, SS_I_INV) { 
     sendInvToL1;
     i_allocateTBE;
@@ -1234,6 +1211,11 @@ assert(false);
     fi_sendInvAckToL3;
     s_deallocateTBE;
     popResponseQueue;
+kd_wakeUpDependents;
+  }
+
+  transition(SS_I_INV, {L1_GETX, L1_GETS, L1_GET_INSTR}) {
+stall_incoming_l1_requests;
   }
 
   transition(SS_II, Ack, I) { // L1 copy invalidated, we can go to invalid
@@ -1244,6 +1226,10 @@ assert(false);
   transition(SS_II, Inv) { // eh?
     die;
   }
+
+  transition(SS_I, {L1_GETX, L1_GETS, L1_GET_INSTR}) {
+stall_incoming_l1_requests;
+}
 
 
 
@@ -1270,6 +1256,7 @@ assert(false);
 
   transition(ES, Fwd_GETX, I) {
     relayDataToRequestor;
+ff_deallocateL2CacheBlock;
     popRequestQueue;
   }
 
@@ -1281,10 +1268,6 @@ assert(false);
     popRequestQueue;
   }
 
-  transition(EX_IWB, L1_GETX) {
-    stall_incoming_l1_requests;
-  }
-
   transition(EX_IWB_FWD, {WB_Data, WB_Data_clean}, I) {
      writeDataToTBEFromResponse;
      sendDataToRequestor_fromTBE;
@@ -1294,19 +1277,15 @@ assert(false);
      kd_wakeUpDependents;
   } 
 
-  transition(EX_IWB_FWD, {L1_GETS, L1_GET_INSTR, L1_GETX}) {
+  transition({EX_IWB, EX_IWB_FWD, EX_IWB_SELF_NO_PUTX, EX_IWB_SELF}, {L1_GETS, L1_GET_INSTR, L1_GETX}) {
     stall_incoming_l1_requests;
   }
 
-  transition(EX_IWB_FWD, Ack, I) {
-     sendDataToRequestor_fromTBE;
-     s_deallocateTBE;
+  transition(EX_IWB_FWD, Ack) {
      popResponseQueue;
-	t_sendWBAckFromResponse;
-     kd_wakeUpDependents;
   }
 
-  transition(IS, Inv) {
+  transition({IS, IX}, Inv) {
 fi_sendInvAckToL3;
 	popRequestQueue;
   }
@@ -1345,16 +1324,18 @@ fi_sendInvAckToL3;
     kd_wakeUpDependents;
   }
 
-  transition(EX_IWB_SELF, {L1_GETS, L1_GETX, L1_GET_INSTR}) { //L1 does not wait for ack
-stall_incoming_l1_requests;
-  }
-
   transition(SS_X, L2_Replacement) {
 	stall_incoming_l1_requests;
   }
-  transition(IS, Ack) {
+  transition({IS, IX}, Ack) {
 	popResponseQueue;
   }
+
+  transition(SS, Ack) {
+	popResponseQueue;
+  }
+
+  
   
 
 }

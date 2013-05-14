@@ -769,7 +769,7 @@ machine(L1Cache, "MESIF Directory L1 Cache Multicore")
   transition(E, Inv, I) {
     // don't send data, not modified yet, L2 still has valid value
     forward_eviction_to_cpu;
-    fi_sendInvAck;
+    f_sendWBDataToL2;
     l_popRequestQueue;
   }
 
@@ -828,6 +828,14 @@ machine(L1Cache, "MESIF Directory L1 Cache Multicore")
     kd_wakeUpDependents;
   }
 
+  transition(IS, Data_Exclusive, E) { // all acks for address, we can use it now
+    u_writeDataToL1Cache;
+    h_load_hit;
+    s_deallocateTBE;
+    o_popIncomingResponseQueue;
+    kd_wakeUpDependents;
+  }
+
   transition(IS_I, Data, I) { //all acks for address, we can drop it now
     u_writeDataToL1Cache;
     h_load_hit;
@@ -875,8 +883,9 @@ machine(L1Cache, "MESIF Directory L1 Cache Multicore")
 
   // Transitions from IM
   transition({IM, SM}, Inv, IM) { //TODO used to be invack
-//    fi_sendInvAck;
-    z_stallAndWaitRequestQueue;
+    fi_sendInvAck;
+	l_popRequestQueue;
+//    z_stallAndWaitRequestQueue;
   }
 
 //  transition(IM, Data, SM) {
@@ -886,7 +895,7 @@ machine(L1Cache, "MESIF Directory L1 Cache Multicore")
 //  }
 
   //simlified version
-  transition(IM, Data, M) {
+  transition(IM, Data_Exclusive, M) {
     u_writeDataToL1Cache;
     hh_store_hit;
     s_deallocateTBE;
@@ -910,7 +919,7 @@ machine(L1Cache, "MESIF Directory L1 Cache Multicore")
 //    o_popIncomingResponseQueue;
 //  }
 
-  transition(SM, Ack, M) {
+  transition(SM, {Ack, Data_Exclusive}, M) {
     hh_store_hit;
     s_deallocateTBE;
     o_popIncomingResponseQueue;

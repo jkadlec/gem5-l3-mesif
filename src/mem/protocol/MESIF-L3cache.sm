@@ -255,7 +255,7 @@ machine(L3Cache, "MESIF Directory L3 Cache CMP")
       return Event:L2_GETX;
     } else if (type == CoherenceRequestType:UPGRADE) {
       if ( is_valid(cache_entry) && cache_entry.Sharers.isElement(requestor) ) {
-        return Event:L2_UPGRADE;
+        return Event:L2_GETX; // !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!! used to be upgrade, but how do you knot that the value was not evicted in L1
       } else {
         return Event:L2_GETX;
       }
@@ -903,7 +903,7 @@ machine(L3Cache, "MESIF Directory L3 Cache CMP")
   }
 
   transition({NP, SS, M, MT, M_I, I_I, S_I, IS, ISS, IM, M_MB, MT_IB, MT_SB}, L2_PUTX_old) {
-//    t_sendWBAck;    
+    t_sendWBAck;    
     jj_popL2RequestQueue;
   }
 
