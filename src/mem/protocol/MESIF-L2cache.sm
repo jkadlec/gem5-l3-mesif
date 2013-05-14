@@ -1324,8 +1324,7 @@ assert(false);
   }
 
   transition(IS, Inv) {
-	fi_sendInvAckToL3;
-	popRequestQueue;
+    stall_incoming_l1_requests;
   }
 
   transition(EX_IACK, {Fwd_GET_INSTR, Fwd_GETS}) {
