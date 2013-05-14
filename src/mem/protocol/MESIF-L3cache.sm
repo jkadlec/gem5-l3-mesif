@@ -903,7 +903,7 @@ machine(L3Cache, "MESIF Directory L3 Cache CMP")
   }
 
   transition({NP, SS, M, MT, M_I, I_I, S_I, IS, ISS, IM, M_MB, MT_IB, MT_SB}, L2_PUTX_old) {
-    t_sendWBAck;    
+//    t_sendWBAck;    
     jj_popL2RequestQueue;
   }
 
@@ -1181,15 +1181,21 @@ machine(L3Cache, "MESIF Directory L3 Cache CMP")
   transition({MT_I, MCT_I}, WB_Data, M_I) {
     qq_writeDataToTBE;
     ct_exclusiveReplacementFromTBE;
-    t_sendWBAckResp; // TODO added by me, I guess it should be like that, right?
+//    t_sendWBAckResp; // TODO added by me, I guess it should be like that, right?
     o_popIncomingResponseQueue;
   }
 
-  transition(MCT_I, {WB_Data_clean, Ack_all}, M_I) {
+  transition(MCT_I, {WB_Data_clean}, M_I) {
     c_exclusiveCleanReplacement;   
-    t_sendWBAckResp; // TODO added by me, I guess it should be like that, right?
+//    t_sendWBAckResp; // TODO added by me, I guess it should be like that, right?
     o_popIncomingResponseQueue;
   }
+
+  transition(MCT_I, {Ack_all}, M_I) {
+    c_exclusiveCleanReplacement;   
+    o_popIncomingResponseQueue;
+  }
+
 
   transition(MCT_I,  {L2_PUTX, L2_PUTX_old}){
     zz_stallAndWaitL2RequestQueue; 

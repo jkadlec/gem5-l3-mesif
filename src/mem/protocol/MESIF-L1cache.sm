@@ -925,4 +925,8 @@ machine(L1Cache, "MESIF Directory L1 Cache Multicore")
 	l_popRequestQueue;
   }
 
+  transition({IM, IS}, WB_Ack) { //bug in L2, should not send WB_Ack
+	o_popIncomingResponseQueue;
+  }
+
 }

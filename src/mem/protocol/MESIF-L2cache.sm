@@ -960,10 +960,6 @@ assert(false);
 	kd_wakeUpDependents;
   }
 
-  transition(SS, WB_Ack) { //TODO check
-	popResponseQueue;
-   }
-
   // L1 does not have the value, L3 has clean copy, we can do silent transition
   transition(S, L2_Replacement, I) { // Just L1, L3 can keep the value
     ff_deallocateL2CacheBlock;
@@ -985,8 +981,7 @@ assert(false);
     popResponseQueue;
   }
 
-  transition(SS_I, Inv, SS_I) { // Already invalidating
-    fi_sendInvAck;
+  transition(SS_I, Inv, SS_I_INV) { // Already invalidating
     popRequestQueue;
   }
 
@@ -1106,7 +1101,7 @@ assert(false);
   }
 
   transition(EX_IWB, {WB_Data, WB_Data_clean}, EX_IACK) { // Writeback data from L1 after Invalidation, waiting for L3 Inv Ack, L1 does not want a WB_ACK
-    t_sendWBAckFromResponse;
+//    t_sendWBAckFromResponse;
     writeDataToTBEFromResponse;
     sendWBDataToL3FromTBE;
     popResponseQueue;
@@ -1115,13 +1110,13 @@ assert(false);
 
   transition(EX_IWB_SELF, {WB_Data, WB_Data_clean}, EX_IACK) {
     writeDataToTBEFromResponse;
-    t_sendWBAckFromResponse;
+//    t_sendWBAckFromResponse;
     issuePUTXfromTBE;
     popResponseQueue;
     kd_wakeUpDependents;
   }
 
-  transition(EX_IWB_SELF_NO_PUTX, {WB_Data, WB_Data_clean}, EX_IACK_NO_PUTX) {
+  transition(EX_IWB_SELF_NO_PUTX, {WB_Data, WB_Data_clean}, I) {
     writeDataToTBEFromResponse;
     sendWBDataToL3FromTBE;
     t_sendWBAckFromResponse;
@@ -1213,18 +1208,18 @@ assert(false);
   }
 
   transition(EX_IWB_SELF, Ack, EX_IACK) { // this means that L1 did not do any changes to the value given. Or it was in the IM state!!!!!!!!!!!!!!
-    sendWBDataToL3FromTBE
+//    sendWBDataToL3FromTBE
     issuePUTXfromTBE;
-    popResponseQueue;
 	t_sendWBAckFromResponse;
+    popResponseQueue;
     kd_wakeUpDependents;
   }
 
   transition(EX_IWB_SELF_NO_PUTX, Ack, EX_IACK_NO_PUTX) {
-    popResponseQueue;
     sendWBDataToL3FromTBE;
     kd_wakeUpDependents;
 	t_sendWBAckFromResponse;
+    popResponseQueue;
   }
 
   
@@ -1238,14 +1233,6 @@ assert(false);
   transition(SS_I_INV, Ack, I) {
     fi_sendInvAckToL3;
     s_deallocateTBE;
-    popResponseQueue;
-  }
-
-  transition(SS_I_INV, Inv) {  // ??? oh man, why does this happen. Only when multiple L2s...
-    popRequestQueue;
-  }
-
-  transition(I, WB_Ack) { // See L3 modification, deadlock.
     popResponseQueue;
   }
 
@@ -1263,10 +1250,6 @@ assert(false);
 
 
 //TODOOTASOFDSAOFSAODFASOFAOSFOSADFO SADOFSODAFASOFDA l3 nejriv rekne, kolik ma prijit acku a az pak zacnou chodit?
-
-  transition(IS, WB_Ack) { // lost race TODO really?
-    popResponseQueue;
-  }
 
   transition(IX, Data_L2) { //TODO this should work, but deadlocks on unblock in l3
     jj_sendExclusiveUnblock;
@@ -1324,7 +1307,8 @@ assert(false);
   }
 
   transition(IS, Inv) {
-    stall_incoming_l1_requests;
+fi_sendInvAckToL3;
+	popRequestQueue;
   }
 
   transition(EX_IACK, {Fwd_GET_INSTR, Fwd_GETS}) {
@@ -1361,8 +1345,16 @@ assert(false);
     kd_wakeUpDependents;
   }
 
+  transition(EX_IWB_SELF, {L1_GETS, L1_GETX, L1_GET_INSTR}) { //L1 does not wait for ack
+stall_incoming_l1_requests;
+  }
+
   transition(SS_X, L2_Replacement) {
 	stall_incoming_l1_requests;
   }
+  transition(IS, Ack) {
+	popResponseQueue;
+  }
+  
 
 }
