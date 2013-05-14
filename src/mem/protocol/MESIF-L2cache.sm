@@ -31,7 +31,7 @@ machine(L2Cache, "MESIF Directory L2 Cache Multicore")
    : CacheMemory * L2cacheMemory,
    int L1ID,
    int banks,
-   int l3_select_num_bits, //?
+   int num_bits, //?
    int l2_request_latency = 2,
    int l2_response_latency = 2,
    int to_l3_latency = 1
@@ -133,7 +133,7 @@ machine(L2Cache, "MESIF Directory L2 Cache Multicore")
 
   TBETable L2_TBEs, template_hack="<L2Cache_TBE>";
 
-//  int l3_select_low_bit, default="RubySystem::getBlockSizeBits()";
+  int low_bit, default="RubySystem::getBlockSizeBits()";
 
   void set_cache_entry(AbstractCacheEntry a);
   void unset_cache_entry();
@@ -270,7 +270,7 @@ machine(L2Cache, "MESIF Directory L2 Cache Multicore")
 //			enqueue(unblockNetwork_out, ResponseMsg) {
 //				out_msg.Address := in_msg.Address;
 //				out_msg.Sender := machineID;
-//				out_msg.Destination.add(mapAddressToBank(in_msg.Address, MachineType:L3Cache, banks));
+//      			out_msg.Destination.add(mapAddressToBank(address, MachineType:L3Cache, low_bit, num_bits));
 //				out_msg.Type := in_msg.Type;
 //				out_msg.MessageSize := in_msg.MessageSize;
 //			}
@@ -364,7 +364,10 @@ machine(L2Cache, "MESIF Directory L2 Cache Multicore")
         		trigger(Event:Data_L3, in_msg.Address, cache_entry, tbe);
 	        } else if (in_msg.Type == CoherenceResponseType:WB_ACK) {
         		trigger(Event:WB_Ack, in_msg.Address, cache_entry, tbe);
+	        } else if (in_msg.Type == CoherenceResponseType:ACK) {
+        		trigger(Event:Ack, in_msg.Address, cache_entry, tbe);
 		} else {
+			DPRINTF(RubySlicc, "%s\n", in_msg);
 			error("unknown message type from L3");
 		}
 	} else if (machineIDToMachineType(in_msg.Sender) == MachineType:L1Cache) { //L1 response
@@ -415,7 +418,7 @@ machine(L2Cache, "MESIF Directory L2 Cache Multicore")
         out_msg.Requestor := machineID;
         out_msg.DataBlk := in_msg.DataBlk;
         out_msg.Dirty := in_msg.Dirty;
-        out_msg.Destination.add(mapAddressToBank(address, MachineType:L3Cache, banks));
+        out_msg.Destination.add(mapAddressToBank(address, MachineType:L3Cache, low_bit, num_bits));
         DPRINTF(RubySlicc, "Relay to L3 for: address: %s, destination: %s, type %s\n",
                 address, out_msg.Destination, in_msg.Type);
         out_msg.MessageSize := in_msg.MessageSize;
@@ -433,7 +436,7 @@ machine(L2Cache, "MESIF Directory L2 Cache Multicore")
         out_msg.Sender := machineID;
         out_msg.DataBlk := in_msg.DataBlk;
         out_msg.Dirty := in_msg.Dirty;
-        out_msg.Destination.add(mapAddressToBank(address, MachineType:L3Cache, banks));
+        out_msg.Destination.add(mapAddressToBank(address, MachineType:L3Cache, low_bit, num_bits));
         DPRINTF(RubySlicc, "Relay for: address: %s, destination: %s\n",
                 address, out_msg.Destination);
         out_msg.MessageSize := in_msg.MessageSize;
@@ -481,7 +484,7 @@ machine(L2Cache, "MESIF Directory L2 Cache Multicore")
       out_msg.DataBlk := cache_entry.DataBlk;
       out_msg.Dirty := cache_entry.Dirty;
       out_msg.Sender := machineID;
-      out_msg.Destination.add(mapAddressToBank(address, MachineType:L3Cache, banks));
+      out_msg.Destination.add(mapAddressToBank(address, MachineType:L3Cache, low_bit, num_bits));
       out_msg.MessageSize := MessageSizeType:Response_Data;
     }
   }
@@ -524,7 +527,7 @@ machine(L2Cache, "MESIF Directory L2 Cache Multicore")
       out_msg.DataBlk := tbe.DataBlk;
       out_msg.Dirty := tbe.Dirty;
       out_msg.Sender := machineID;
-      out_msg.Destination.add(mapAddressToBank(address, MachineType:L3Cache, banks));
+      out_msg.Destination.add(mapAddressToBank(address, MachineType:L3Cache, low_bit, num_bits));
       out_msg.MessageSize := MessageSizeType:Response_Data;
     }
   }
@@ -537,7 +540,7 @@ machine(L2Cache, "MESIF Directory L2 Cache Multicore")
       out_msg.DataBlk := cache_entry.DataBlk;
       out_msg.Dirty := cache_entry.Dirty;
       out_msg.Sender := machineID;
-      out_msg.Destination.add(mapAddressToBank(address, MachineType:L3Cache, banks));
+      out_msg.Destination.add(mapAddressToBank(address, MachineType:L3Cache, low_bit, num_bits));
       out_msg.MessageSize := MessageSizeType:Response_Data; // response control, response data, writeback data ---------------------------------------------------------1!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!1@@@@yeah, i need more actions
     }
   }
@@ -550,7 +553,7 @@ machine(L2Cache, "MESIF Directory L2 Cache Multicore")
       out_msg.DataBlk := tbe.DataBlk;
       out_msg.Dirty := tbe.Dirty;
       out_msg.Sender := machineID;
-      out_msg.Destination.add(mapAddressToBank(address, MachineType:L3Cache, banks));
+      out_msg.Destination.add(mapAddressToBank(address, MachineType:L3Cache, low_bit, num_bits));
       out_msg.MessageSize := MessageSizeType:Writeback_Data;
     }
   }
@@ -575,7 +578,7 @@ machine(L2Cache, "MESIF Directory L2 Cache Multicore")
         out_msg.Address := address;
         out_msg.Type := CoherenceResponseType:ACK;
         out_msg.Sender := machineID;
-        out_msg.Destination.add(mapAddressToBank(address, MachineType:L3Cache, banks));
+        out_msg.Destination.add(mapAddressToBank(address, MachineType:L3Cache, low_bit, num_bits));
         out_msg.MessageSize := MessageSizeType:Response_Control;
         out_msg.AckCount := 1;
   }
@@ -609,7 +612,7 @@ machine(L2Cache, "MESIF Directory L2 Cache Multicore")
       out_msg.DataBlk := cache_entry.DataBlk;
       out_msg.Dirty := cache_entry.Dirty;
       out_msg.Requestor:= machineID;
-      out_msg.Destination.add(mapAddressToBank(address, MachineType:L3Cache, banks));
+      out_msg.Destination.add(mapAddressToBank(address, MachineType:L3Cache, low_bit, num_bits));
       if (cache_entry.Dirty) {
         out_msg.MessageSize := MessageSizeType:Writeback_Data;
       } else {
@@ -626,7 +629,7 @@ peek(responseIntraChipL2Network_in, ResponseMsg) {
       out_msg.DataBlk := in_msg.DataBlk;
       out_msg.Dirty := in_msg.Dirty;
       out_msg.Requestor:= machineID;
-      out_msg.Destination.add(mapAddressToBank(address, MachineType:L3Cache, banks));
+      out_msg.Destination.add(mapAddressToBank(address, MachineType:L3Cache, low_bit, num_bits));
       if (in_msg.Dirty) {
         out_msg.MessageSize := MessageSizeType:Writeback_Data;
       } else {
@@ -645,7 +648,7 @@ enqueue(requestIntraChipL2Network_out, RequestMsg, latency=l2_response_latency) 
       out_msg.DataBlk := tbe.DataBlk;
       out_msg.Dirty := tbe.Dirty;
       out_msg.Requestor := machineID;
-      out_msg.Destination.add(mapAddressToBank(address, MachineType:L3Cache, banks));
+      out_msg.Destination.add(mapAddressToBank(address, MachineType:L3Cache, low_bit, num_bits));
       if (tbe.Dirty) {
         out_msg.MessageSize := MessageSizeType:Writeback_Data;
       } else {
@@ -833,7 +836,7 @@ action(downgradeL1, desc="...") {
 			out_msg.Type := CoherenceResponseType:DATA;
 			out_msg.Sender := machineID;
 			out_msg.MessageSize := MessageSizeType:Writeback_Data;
-      			out_msg.Destination.add(mapAddressToBank(address, MachineType:L3Cache, banks));
+      			out_msg.Destination.add(mapAddressToBank(address, MachineType:L3Cache, low_bit, num_bits));
 		}
 	}
   }
@@ -847,7 +850,7 @@ action(downgradeL1, desc="...") {
 		out_msg.Type := CoherenceResponseType:DATA;
 		out_msg.Sender := machineID;
 		out_msg.MessageSize := MessageSizeType:Writeback_Data;
-      		out_msg.Destination.add(mapAddressToBank(address, MachineType:L3Cache, banks));
+      			out_msg.Destination.add(mapAddressToBank(address, MachineType:L3Cache, low_bit, num_bits));
 	}
   }
 
@@ -860,7 +863,7 @@ assert(false);
       out_msg.Address := address;
       out_msg.Type := CoherenceResponseType:UNBLOCK;
       out_msg.Sender := machineID;
-      out_msg.Destination.add(mapAddressToBank(address, MachineType:L3Cache, banks));
+      			out_msg.Destination.add(mapAddressToBank(address, MachineType:L3Cache, low_bit, num_bits));
       out_msg.MessageSize := MessageSizeType:Response_Control;
       DPRINTF(RubySlicc, "%s\n", address);
       
@@ -872,7 +875,7 @@ assert(false);
       out_msg.Address := address;
       out_msg.Type := CoherenceResponseType:EXCLUSIVE_UNBLOCK;
       out_msg.Sender := machineID;
-      out_msg.Destination.add(mapAddressToBank(address, MachineType:L3Cache, banks));
+      			out_msg.Destination.add(mapAddressToBank(address, MachineType:L3Cache, low_bit, num_bits));
       out_msg.MessageSize := MessageSizeType:Response_Control;
       DPRINTF(RubySlicc, "%s\n", address);
 
@@ -939,6 +942,7 @@ assert(false);
   // L1 needs to write, we have to get the value from L2. Or, we could send it to L1 right away, but that could lead to all sorts of races and we don't want that
   transition({S, SS}, {L1_GETX, L1_UPGRADE}, SS_X) {
     a_relayRequestToL3;
+    i_allocateTBE;
     uu_profileDataMiss;
     popRequestQueue;
   }
@@ -948,11 +952,17 @@ assert(false);
     popRequestQueue;
   }
 
-  transition(SS_X, Data_Exclusive_L3, EX) { // TODO wait for all acks!!! used to be data only
-     u_writeDataToL2CacheFromRespobse;
-     a_relayResponseToL1;
-     popResponseQueue;
+  transition(SS_X, Ack, EX) {
+	sendAckToL1;
+	popResponseQueue;
+     s_deallocateTBE;
+	jj_sendExclusiveUnblock;
+	kd_wakeUpDependents;
   }
+
+  transition(SS, WB_Ack) { //TODO check
+	popResponseQueue;
+   }
 
   // L1 does not have the value, L3 has clean copy, we can do silent transition
   transition(S, L2_Replacement, I) { // Just L1, L3 can keep the value
@@ -1053,9 +1063,13 @@ assert(false);
   }
 
   transition(EX, Inv, EX_IWB) { // L2 eviction from L3, cannot send data to L3 until L1 writebacks
+    popRequestQueue;
     i_allocateTBE;
     ff_deallocateL2CacheBlock;
     sendInvToL1;
+  }
+
+  transition(EX_IWB, Inv) { //this is probably bug in router/network
     popRequestQueue;
   }
 
@@ -1092,6 +1106,7 @@ assert(false);
   }
 
   transition(EX_IWB, {WB_Data, WB_Data_clean}, EX_IACK) { // Writeback data from L1 after Invalidation, waiting for L3 Inv Ack, L1 does not want a WB_ACK
+    t_sendWBAckFromResponse;
     writeDataToTBEFromResponse;
     sendWBDataToL3FromTBE;
     popResponseQueue;
@@ -1132,8 +1147,8 @@ assert(false);
     popRequestQueue;
   }
 
-  transition(EX_IWB_SELF, Inv, EX_IWB_SELF_NO_PUTX) { // We cannot invalidate until response with Write Back data from L1 arrives
-    stall_incoming_l1_requests;
+  transition({EX_IWB_SELF}, Inv, EX_IWB_SELF_NO_PUTX) { // We cannot invalidate until response with Write Back data from L1 arrives
+    popRequestQueue;
   }
 
   transition({EX_IACK, EX_IACK_NO_PUTX}, WB_Ack, I) { // Ack from L3 arrived, can go to starting state
@@ -1193,12 +1208,15 @@ assert(false);
 
   transition(EX_IWB, Ack, EX_IACK) { // this means that L1 did not do any changes to the value given. Or it was in the IM state!!!!!!!!!!!!!!
     sendWBDataToL3FromTBE;
+	t_sendWBAckFromResponse;
     popResponseQueue;
   }
 
   transition(EX_IWB_SELF, Ack, EX_IACK) { // this means that L1 did not do any changes to the value given. Or it was in the IM state!!!!!!!!!!!!!!
+    sendWBDataToL3FromTBE
     issuePUTXfromTBE;
     popResponseQueue;
+	t_sendWBAckFromResponse;
     kd_wakeUpDependents;
   }
 
@@ -1206,6 +1224,7 @@ assert(false);
     popResponseQueue;
     sendWBDataToL3FromTBE;
     kd_wakeUpDependents;
+	t_sendWBAckFromResponse;
   }
 
   
@@ -1286,6 +1305,7 @@ assert(false);
   transition(EX_IWB_FWD, {WB_Data, WB_Data_clean}, I) {
      writeDataToTBEFromResponse;
      sendDataToRequestor_fromTBE;
+    t_sendWBAckFromResponse;
      s_deallocateTBE;
      popResponseQueue;
      kd_wakeUpDependents;
@@ -1299,11 +1319,13 @@ assert(false);
      sendDataToRequestor_fromTBE;
      s_deallocateTBE;
      popResponseQueue;
+	t_sendWBAckFromResponse;
      kd_wakeUpDependents;
   }
 
   transition(IS, Inv) {
-    stall_incoming_l1_requests;
+	fi_sendInvAckToL3;
+	popRequestQueue;
   }
 
   transition(EX_IACK, {Fwd_GET_INSTR, Fwd_GETS}) {
@@ -1323,9 +1345,10 @@ assert(false);
     popRequestQueue;
   }
 
-  transition(EX_IWB_S_FWD, {WB_Data_clean, WB_Data}, SS) {
+  transition(EX_IWB_S_FWD, {WB_Data_clean, WB_Data}, SS) { //TODO: no need to evict, downgrade is enough
     u_writeDataToL2CacheFromRespobse;
     writeDataToTBEFromResponse;
+    t_sendWBAckFromResponse;
     sendDataToRequestor_fromTBE;
     s_deallocateTBE;
     popResponseQueue;
@@ -1338,4 +1361,9 @@ assert(false);
     popResponseQueue;
     kd_wakeUpDependents;
   }
+
+  transition(SS_X, L2_Replacement) {
+	stall_incoming_l1_requests;
+  }
+
 }

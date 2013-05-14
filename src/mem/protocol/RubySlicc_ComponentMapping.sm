@@ -31,7 +31,7 @@
 
 int machineCount(MachineType machType);
 MachineID mapAddressToRange(Address addr, MachineType type, int low, int high);
-MachineID mapAddressToBank(Address addr, MachineType type, int banks);
+MachineID mapAddressToBank(Address addr, MachineType type, int low, int high);
 MachineID idToMachineID(MachineType type, int num);
 NetDest broadcast(MachineType type);
 MachineID map_Address_to_DMA(Address addr);

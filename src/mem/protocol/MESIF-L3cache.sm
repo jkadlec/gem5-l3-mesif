@@ -36,7 +36,9 @@ machine(L3Cache, "MESIF Directory L3 Cache CMP")
  : CacheMemory * L3cacheMemory,
    int l3_request_latency = 2,  
    int l3_response_latency = 2,
-   int to_l3_latency = 1
+   int to_l3_latency = 1,
+   int CaID,
+   int nodes
 {
   // L3 BANK QUEUES
   // From local bank of L3 cache TO the network
@@ -420,12 +422,11 @@ machine(L3Cache, "MESIF Directory L3 Cache CMP")
 
   action(a_issueGETS, "a", desc="issue local request globally") {
     peek(L2RequestIntraChipL3Network_in, RequestMsg) {
-      enqueue(DirRequestIntraChipL3Network_out, RequestMsg, latency=request_latency) {
+      enqueue(DirRequestIntraChipL3Network_out, RequestMsg) {
         out_msg.Address := address;
         out_msg.Type := CoherenceRequestType:GETS;
-        out_msg.RequestorMachine := MachineType:L2Cache;
         out_msg.Requestor := machineID;
-        out_msg.Destination.add(map_Address_to_Directory(address));
+        out_msg.Destination.add(idToMachineID(MachineType:Directory, CaID));
         out_msg.MessageSize := MessageSizeType:Request_Control;
       }
     }
@@ -433,38 +434,23 @@ machine(L3Cache, "MESIF Directory L3 Cache CMP")
 
   action(a_issueGETX, "\a", desc="issue local request globally") {
     peek(L2RequestIntraChipL3Network_in, RequestMsg) {
-      enqueue(DirRequestIntraChipL3Network_out, RequestMsg, latency=request_latency) {
+      enqueue(DirRequestIntraChipL3Network_out, RequestMsg) {
         out_msg.Address := address;
         out_msg.Type := CoherenceRequestType:GETX;
-        out_msg.RequestorMachine := MachineType:L2Cache;
         out_msg.Requestor := machineID;
-        out_msg.Destination.add(map_Address_to_Directory(address));
+        out_msg.Destination.add(idToMachineID(MachineType:Directory, CaID));
         out_msg.MessageSize := MessageSizeType:Request_Control;
       }
     }
   }
 
   action(b_issuePUTX, "b", desc="Issue PUTX") {
-    enqueue(DirRequestIntraChipL3Network_out, RequestMsg, latency=request_latency) {
+    enqueue(DirRequestIntraChipL3Network_out, RequestMsg) {
       out_msg.Address := address;
       out_msg.Type := CoherenceRequestType:PUTX;
-      out_msg.RequestorMachine := MachineType:L2Cache;
       out_msg.Requestor := machineID;
-      out_msg.Destination.add(map_Address_to_Directory(address));
+      out_msg.Destination.add(idToMachineID(MachineType:Directory, CaID));
       out_msg.MessageSize := MessageSizeType:Writeback_Control;
-    }
-  }
-
-
-  action(a_issueFetchToMemory, "avvv", desc="fetch data from memory") {
-    peek(L2RequestIntraChipL3Network_in, RequestMsg) {
-      enqueue(DirRequestIntraChipL3Network_out, RequestMsg, latency=l3_request_latency) {
-        out_msg.Address := address;
-        out_msg.Type := CoherenceRequestType:GETS;
-        out_msg.Requestor := machineID;
-        out_msg.Destination.add(map_Address_to_Directory(address));
-        out_msg.MessageSize := MessageSizeType:Control;
-      }
     }
   }
 
@@ -474,6 +460,7 @@ machine(L3Cache, "MESIF Directory L3 Cache CMP")
         assert(is_valid(cache_entry));
         out_msg.Address := address;
         out_msg.Type := in_msg.Type;
+	assert(in_msg.Type != CoherenceRequestType:INV);
         out_msg.Requestor := in_msg.Requestor;
         out_msg.Destination.add(cache_entry.Exclusive);
         out_msg.MessageSize := MessageSizeType:Request_Control;
@@ -485,9 +472,13 @@ machine(L3Cache, "MESIF Directory L3 Cache CMP")
     enqueue(responseIntraChipL3Network_out, ResponseMsg, latency=l3_response_latency) {
       assert(is_valid(cache_entry));
       out_msg.Address := address;
-      out_msg.Type := CoherenceResponseType:MEMORY_DATA;
+      if (cache_entry.Dirty) {
+      	out_msg.Type := CoherenceResponseType:WRITEBACK_DIRTY_DATA;
+	} else {
+      	out_msg.Type := CoherenceResponseType:WRITEBACK_CLEAN_ACK;
+}
       out_msg.Sender := machineID;
-      out_msg.Destination.add(map_Address_to_Directory(address));
+        out_msg.Destination.add(idToMachineID(MachineType:Directory, CaID));
       out_msg.DataBlk := cache_entry.DataBlk;
       DPRINTF(RubySlicc, "Sending data to memory: %s\n", out_msg.DataBlk);
       out_msg.Dirty := cache_entry.Dirty;
@@ -498,9 +489,9 @@ machine(L3Cache, "MESIF Directory L3 Cache CMP")
   action(c_exclusiveCleanReplacement, "cc", desc="Send ack to memory for clean replacement") {
     enqueue(responseIntraChipL3Network_out, ResponseMsg, latency=l3_response_latency) {
       out_msg.Address := address;
-      out_msg.Type := CoherenceResponseType:ACK;
+      out_msg.Type := CoherenceResponseType:WRITEBACK_CLEAN_ACK;
       out_msg.Sender := machineID;
-      out_msg.Destination.add(map_Address_to_Directory(address));
+        out_msg.Destination.add(idToMachineID(MachineType:Directory, CaID));
       out_msg.MessageSize := MessageSizeType:Response_Control;
     }
   }
@@ -509,9 +500,13 @@ machine(L3Cache, "MESIF Directory L3 Cache CMP")
     enqueue(responseIntraChipL3Network_out, ResponseMsg, latency=l3_response_latency) {
       assert(is_valid(tbe));
       out_msg.Address := address;
-      out_msg.Type := CoherenceResponseType:MEMORY_DATA;
+      if (tbe.Dirty) {
+      	out_msg.Type := CoherenceResponseType:WRITEBACK_DIRTY_DATA;
+	} else {
+      	out_msg.Type := CoherenceResponseType:WRITEBACK_CLEAN_ACK;
+}
       out_msg.Sender := machineID;
-      out_msg.Destination.add(map_Address_to_Directory(address));
+        out_msg.Destination.add(idToMachineID(MachineType:Directory, CaID));
       out_msg.DataBlk := tbe.DataBlk;
       out_msg.Dirty := tbe.Dirty;
       out_msg.MessageSize := MessageSizeType:Response_Data;
@@ -620,7 +615,8 @@ machine(L3Cache, "MESIF Directory L3 Cache CMP")
       out_msg.Destination.add(tbe.L2_GetX_ID);
       DPRINTF(RubySlicc, "%s\n", out_msg.Destination);
       out_msg.DataBlk := cache_entry.DataBlk;
-      out_msg.Dirty := cache_entry.Dirty;
+//      out_msg.Dirty := cache_entry.Dirty; !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+	out_msg.Dirty := true;
       DPRINTF(RubySlicc, "Address: %s, Destination: %s, DataBlock: %s\n",
               out_msg.Address, out_msg.Destination, out_msg.DataBlk);
       out_msg.MessageSize := MessageSizeType:Response_Data;
@@ -936,7 +932,7 @@ machine(L3Cache, "MESIF Directory L3 Cache CMP")
     nn_addSharer;
     i_allocateTBE;
     ss_recordGetSL2ID;
-    a_issueFetchToMemory;
+    a_issueGETS;
     uu_profileMiss;
     jj_popL2RequestQueue;
   }
@@ -947,7 +943,7 @@ machine(L3Cache, "MESIF Directory L3 Cache CMP")
     nn_addSharer;
     i_allocateTBE;
     ss_recordGetSL2ID;
-    a_issueFetchToMemory;
+    a_issueGETS;
     uu_profileMiss;
     jj_popL2RequestQueue;
   }
@@ -958,7 +954,7 @@ machine(L3Cache, "MESIF Directory L3 Cache CMP")
     // nn_addSharer;
     i_allocateTBE;
     xx_recordGetXL2ID;
-    a_issueFetchToMemory;
+    a_issueGETX;
     uu_profileMiss;
     jj_popL2RequestQueue;
   }
@@ -966,11 +962,12 @@ machine(L3Cache, "MESIF Directory L3 Cache CMP")
 
   // transitions from IS/IM
 
-  transition(ISS, Mem_Data, MT_MB) {
+  transition(ISS, Mem_Data, SS) {
     m_writeDataToCache;
-    ex_sendExclusiveDataToGetSRequestors;
+    e_sendDataToGetSRequestors;
     s_deallocateTBE;
     o_popIncomingResponseQueue;
+	kd_wakeUpDependents;
   }
 
   transition(IS, Mem_Data, SS) {
@@ -1190,6 +1187,7 @@ machine(L3Cache, "MESIF Directory L3 Cache CMP")
 
   transition(MCT_I, {WB_Data_clean, Ack_all}, M_I) {
     c_exclusiveCleanReplacement;   
+    t_sendWBAckResp; // TODO added by me, I guess it should be like that, right?
     o_popIncomingResponseQueue;
   }
 
@@ -1237,15 +1235,16 @@ machine(L3Cache, "MESIF Directory L3 Cache CMP")
 
   /////////////////////////////////////stuff below added by me
 
-  transition(M_I, Ack_all) {
-    o_popIncomingResponseQueue; // TODO added by me, who knows
-  }
+///  transition(M_I, Ack_all) {
+//    o_popIncomingResponseQueue; // TODO added by me, who knows
+///  }
 
-  transition({MT, M}, Exclusive_Unblock) { // TODO this was added by me. I guess this happens when L2 has the value and sends it to L1. I could filter these messages at L2, but oh well.
-    k_popUnblockQueue;
-  }
+///WHO KNOWS?
+//  transition({MT, M}, Exclusive_Unblock) { // TODO this was added by me. I guess this happens when L2 has the value and sends it to L1. I could filter these messages at L2, but oh well.
+//    k_popUnblockQueue;
+//  }
   
-  transition(NP, Ack) {
-    o_popIncomingResponseQueue;
-  }
+//  transition(NP, Ack) {
+//    o_popIncomingResponseQueue;
+//  }
 }

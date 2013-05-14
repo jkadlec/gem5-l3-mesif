@@ -61,8 +61,6 @@ machine(L1Cache, "MESIF Directory L1 Cache Multicore")
     IS_I, AccessPermission:Busy, desc="L1 idle, issued GETS, saw Inv before data because directory doesn't block on GETS hit";
 
     M_I, AccessPermission:Busy, desc="L1 replacing, waiting for ACK";
-    SINK_WB_ACK, AccessPermission:Busy, desc="This is to sink WB_Acks from L2";
-
   }
 
   // EVENTS
@@ -683,7 +681,7 @@ machine(L1Cache, "MESIF Directory L1 Cache Multicore")
   //*****************************************************
 
   // Transitions for Load/Store/Replacement/WriteBack from transient states
-  transition({IS, IM, IS_I, M_I, SM, SINK_WB_ACK}, {Load, Ifetch, Store, L1_Replacement}) {
+  transition({IS, IM, IS_I, M_I, SM}, {Load, Ifetch, Store, L1_Replacement}) {
     // We cannot proceed
     z_stallAndWaitMandatoryQueue;
   }
@@ -816,50 +814,11 @@ machine(L1Cache, "MESIF Directory L1 Cache Multicore")
     l_popRequestQueue;
   }
 
-  transition(M_I, Inv, SINK_WB_ACK) { // We lost a race with L2 TODO TODO TODO, removed data sending, but will not work wit multiple cores I guess
-//    ft_sendDataToL2_fromTBE;
-    d2t_sendDataToL2_fromTBE;
-    l_popRequestQueue;
-  }
-
-//  transition(M, Fwd_GETX, I) { //same as Inv effectively
-//    forward_eviction_to_cpu;
-//    d_sendDataToRequestor;
-//    f_sendWBDataToL2;
-//    l_popRequestQueue;
-//  }
-
- // transition(M, {Fwd_GETS, Fwd_GET_INSTR}, S) {// Same as GETS for us, maybe move this to L2?
-//    d_sendDataToRequestor;
-//    d2_sendDataToL2; f vs. d2?
-//    f_sendWBDataToL2;
-//    l_popRequestQueue;
-//  }
-
-//  transition(M_I, Fwd_GETX, SINK_WB_ACK) { //again, same as Inv
-//    d2t_sendDataToL2_fromTBE;
-//    l_popRequestQueue;
-//  }
-
-//  transition(M_I, {Fwd_GETS, Fwd_GET_INSTR}, SINK_WB_ACK) { //we lost a race
-//    dt_sendDataToRequestor_fromTBE;
-//    d2t_sendDataToL2_fromTBE;
-//    l_popRequestQueue;
-//  }
-
   // Transitions from IS
   transition({IS, IS_I}, Inv, IS_I) { //lost race
     fi_sendInvAck;
     l_popRequestQueue;
   }
-
-//  transition(IS, Data_all_Acks, S) { // all acks for address, we can use it now
-//    u_writeDataToL1Cache;
-//    h_load_hit;
-//    s_deallocateTBE;
-//    o_popIncomingResponseQueue;
-//    kd_wakeUpDependents;
-//  }
 
   transition(IS, Data, S) { // all acks for address, we can use it now
     u_writeDataToL1Cache;
@@ -958,18 +917,12 @@ machine(L1Cache, "MESIF Directory L1 Cache Multicore")
     kd_wakeUpDependents;
   }
 
-  transition(SINK_WB_ACK, Inv){
-    fi_sendInvAck;
-    l_popRequestQueue;
-  }
-  
   transition(I, WB_Ack) { // TODO should it be here? Investigate when you have time
     o_popIncomingResponseQueue;
   }
 
-  transition(SINK_WB_ACK, WB_Ack, I){
-    s_deallocateTBE;
-    o_popIncomingResponseQueue;
-    kd_wakeUpDependents;
+  transition(M_I, Inv) {
+	l_popRequestQueue;
   }
+
 }

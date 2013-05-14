@@ -54,6 +54,7 @@ def create_system(options, system, piobus, dma_ports, ruby_system):
 
     print 'Creating new MESIF-based system:'
     print 'DMA:', dma_ports
+#    options.num_l3caches = options.num_dirs
     
     if buildEnv['PROTOCOL'] != 'MESIF':
         panic("This script requires the MESI_CMP_directory protocol to be built.")
@@ -145,7 +146,7 @@ def create_system(options, system, piobus, dma_ports, ruby_system):
 				      L1ID = i,
 				      banks = options.num_l3caches,
                                       L2cacheMemory = l2_cache,
-                                      l3_select_num_bits = l3_bits,
+                                      num_bits = l3_bits,
                                       ruby_system = ruby_system)
 
 	print l2_cntrl._ports
@@ -164,11 +165,14 @@ def create_system(options, system, piobus, dma_ports, ruby_system):
         l3_cache = L3Cache(size = options.l3_size,
                            assoc = options.l3_assoc,
                            start_index_bit = l3_index_start)
+	#distribute 
 
         l3_cntrl = L3Cache_Controller(version = i,
                                       cntrl_id = cntrl_count,
                                       L3cacheMemory = l3_cache,
-                                      ruby_system = ruby_system)
+                                      ruby_system = ruby_system,
+					nodes = options.num_dirs,
+					CaID = i)
         exec("system.l3_cntrl%d = l3_cntrl" % i)
         l3_cntrl_nodes.append(l3_cntrl)
         
@@ -197,29 +201,31 @@ def create_system(options, system, piobus, dma_ports, ruby_system):
                                                              use_map =
                                                            options.use_map),
                                          memBuffer = mem_cntrl,
-                                         ruby_system = ruby_system)
+                                         ruby_system = ruby_system,
+					nodes = options.num_dirs,
+					id = i)
 
         exec("system.dir_cntrl%d = dir_cntrl" % i)
         dir_cntrl_nodes.append(dir_cntrl)
 
         cntrl_count += 1
 
-    for i, dma_port in enumerate(dma_ports):
+#    for i, dma_port in enumerate(dma_ports):
         #
         # Create the Ruby objects associated with the dma controller
         #
-        dma_seq = DMASequencer(version = i,
-                               ruby_system = ruby_system)
+#        dma_seq = DMASequencer(version = i,
+#                               ruby_system = ruby_system)
         
-        dma_cntrl = DMA_Controller(version = i,
-                                   cntrl_id = cntrl_count,
-                                   dma_sequencer = dma_seq,
-                                   ruby_system = ruby_system)
+#        dma_cntrl = DMA_Controller(version = i,
+#                                   cntrl_id = cntrl_count,
+#                                   dma_sequencer = dma_seq,
+#                                   ruby_system = ruby_system)
 
-        exec("system.dma_cntrl%d = dma_cntrl" % i)
-        exec("system.dma_cntrl%d.dma_sequencer.slave = dma_port" % i)
-        dma_cntrl_nodes.append(dma_cntrl)
-        cntrl_count += 1
+#        exec("system.dma_cntrl%d = dma_cntrl" % i)
+#        exec("system.dma_cntrl%d.dma_sequencer.slave = dma_port" % i)
+#        dma_cntrl_nodes.append(dma_cntrl)
+#        cntrl_count += 1
 
     all_cntrls = l1_cntrl_nodes + \
                  l2_cntrl_nodes + \

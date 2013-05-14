@@ -28,105 +28,117 @@
  */
 
 /*
- * $Id$
+ * $Id: MOESI_CMP_token-dir.sm 1.6 05/01/19 15:48:35-06:00 mikem@royal16.cs.wisc.edu $
  */
 
-machine(Directory, "MESIF directory") 
-:  DirectoryMemory * directory,
+
+machine(Directory, "MESIF Caching Agent + Home Agent controller") 
+ : DirectoryMemory * directory,
    MemoryControl * memBuffer,
-   int directory_latency = 6
+   int to_mem_ctrl_latency = 1,
+   int directory_latency = 6,
+int id,
+   int nodes
 {
 
-  // ** IN QUEUES **
-  MessageBuffer foo1, network="From", virtual_network="0", ordered="false", vnet_type="foo";  // a mod-L2 bank -> this Dir
-  MessageBuffer requestToDir, network="From", virtual_network="1", ordered="false", vnet_type="request";
-  MessageBuffer responseToDir, network="From", virtual_network="2", ordered="false", vnet_type="response";
-  
-  MessageBuffer goo1, network="To", virtual_network="0", ordered="false", vnet_type="goo";
-  MessageBuffer forwardFromDir, network="To", virtual_network="1", ordered="false", vnet_type="forward";
-  MessageBuffer responseFromDir, network="To", virtual_network="2", ordered="false", vnet_type="response";  // Dir -> mod-L2 bank
+  MessageBuffer requestToDir, network="From", virtual_network="0", ordered="false", vnet_type="request";
+  MessageBuffer responseToDir, network="From", virtual_network="1", ordered="false", vnet_type="response";
 
+  MessageBuffer requestFromDir, network="To", virtual_network="0", ordered="false", vnet_type="request";
+  MessageBuffer responseFromDir, network="To", virtual_network="1", ordered="false", vnet_type="response";
 
   // STATES
   state_declaration(State, desc="Directory states", default="Directory_State_I") {
     // Base states
-    M, AccessPermission:Maybe_Stale, desc="Modified";
-    E, AccessPermission:Maybe_Stale, desc="Exclusive";
-    S, AccessPermission:Read_Only, desc="Shared";
-    I, AccessPermission:Read_Write, desc="Invalid";
-    F, AccessPermission:Read_Only, desc="Forward";
+    M, AccessPermission:Read_Only, desc="";
+    E, AccessPermission:Read_Only, desc="";
+    I, AccessPermission:Read_Write, desc=""; //this has to be Read_Write, or else simulation fails
+    S, AccessPermission:Read_Only, desc="";
+    F, AccessPermission:Read_Only, desc="";
 
-    IS, AccessPermission:Busy, desc="Blocked, was in idle";
-    SS, AccessPermission:Read_Only, desc="Blocked, was in shared";
-    FF, AccessPermission:Busy, desc="Blocked, was in forward";
-    ME, AccessPermission:Busy, desc="Blocked, going to exlusive";
-    MM, AccessPermission:Busy, desc="Blocked, going to modified";
-    MM_DMA, AccessPermission:Busy, desc="Blocked, going to I";
+    IM_M, AccessPermission:Busy, desc="";
+    IMS_M, AccessPermission:Busy, desc="";
+    XI_M, AccessPermission:Busy, desc="";
+    IE_M, AccessPermission:Busy, desc="";
+    IF_M, AccessPermission:Busy, desc="";
+    IM_S, AccessPermission:Busy, desc="";
+    IF_S, AccessPermission:Busy, desc="";
 
-    MI, AccessPermission:Busy, desc="Blocked on a writeback";
-    MIS, AccessPermission:Busy, desc="Blocked on a writeback, but don't remove from sharers when received";
-//    OS, AccessPermission:Busy, desc="Blocked on a writeback";
-//    OSS, AccessPermission:Busy, desc="Blocked on a writeback, but don't remove from sharers when received";
-
-    XI_M, AccessPermission:Busy, desc="In a stable state, going to I, waiting for the memory controller";
-    XI_U, AccessPermission:Busy, desc="In a stable state, going to I, waiting for an unblock";
-//    OI_D, AccessPermission:Busy, desc="In O, going to I, waiting for data";
-
-//    OD, AccessPermission:Busy, desc="In O, waiting for dma ack from L2";
-    MD, AccessPermission:Busy, desc="In M, waiting for dma ack from L2";
+    IWB_H, AccessPermission:Busy, desc="";
   }
 
+  // Events
   enumeration(Event, desc="Directory events") {
-    GETX, desc="A local GETX arrives";
-    GETS, desc="A local GETS arrives";
-    PUTX, desc="A local PUTX arrives";
-    GETX_Other, desc="A remote GETX arrives";
-    GETS_Other, desc="A remote GETS arrives";
-    Response, desc="An unblock message arrives";
-    Last_Response, desc="An unblock message arrives, we're not waiting for any additional unblocks";
-    Exclusive_Response, desc="The processor become the exclusive owner (E or M) of the line";
-    Clean_Writeback, desc="The final message as part of a PutX/PutS, no data";
-    Dirty_Writeback, desc="The final message as part of a PutX/PutS, contains data";
-    Memory_Data,   desc="Fetched data from memory arrives";
-    Memory_Ack,    desc="Writeback Ack from memory arrives";
-    DMA_READ,      desc="DMA Read";
-    DMA_WRITE,     desc="DMA Write";
-    DMA_ACK,       desc="DMA Ack";
-    Data,          desc="Data to directory";
+    GETX_H, desc="GETX from local L3, we're home node for this line";
+    GETS_H, desc="GETS from local L3, we're home node for this line";
+    PUTX_H, desc="PUTX from local L3, we're home node for this line";
+    PUTX_O, desc="PUTX from local L3, other node is a home node for this line";
+    GETS_O, desc="GETS from local L3, other node is a home node for this line";
+    GETX_O, desc="GETX from local L3, other node is a home node for this line";
+    PUTX_S, desc="PUTX from local L3, other node is a home node for this line";
+    GETS_S, desc="GETS from local L3, other node is a home node for this line";
+    GETX_S, desc="GETX from local L3, other node is a home node for this line";
+    PUTX_R, desc="PUTX from other CA/DIR, we are home home node for this line";
+    GETS_R, desc="GETS from other CA/DIR, we are home node for this line";
+    GETX_R, desc="GETX from other CA/DIR, we are home node for this line";
+    WB_Data_Local, desc="writeback data arrives from L3";
+    WB_Data_CA, desc="writeback data arrives from L3";
+    WB_Ack_Local, desc="writeback ack arrives from L3";
+    WB_Ack_CA, desc="writeback ack arrives from L3";
+    WB_Ack_CA_Other, desc="writeback ack arrives from L3";
+    WB_Ack_CA_Last, desc="writeback ack arrives from L3";
+    WB_Ack_CA_is_Sharer, desc="writeback ack arrives from L3";
+    Memory_Data, desc="Fetched data from memory arrives";
+    Memory_Ack_Local, desc="Writeback Ack from memory arrives";
+    Memory_Ack_CA, desc="Writeback Ack from memory arrives";
+//added by SS for dma
+    DMA_READ, desc="A DMA Read memory request";
+    DMA_WRITE, desc="A DMA Write memory request";
+    CleanReplacement, desc="Clean Replacement in L3 cache";
+    Data_Home, desc="Clean Replacement in L3 cache";
+    Data, desc="Clean Replacement in L3 cache";
+    Response, desc="";
+    Conflict, desc="";
+    End_Conflict, desc="";
+    End_Request, desc="";
   }
 
   // TYPES
 
   // DirectoryEntry
-  structure(Entry, desc="...", interface='AbstractEntry') {
+  structure(Entry, desc="...", interface="AbstractEntry") {
     State DirectoryState,          desc="Directory state";
-    DataBlock DataBlk,             desc="Data for the block";
-    NetDest Sharers,               desc="Sharers for this block";
-    NetDest Forwarder,		   desc="Forwarder for this block";
-    NetDest Owner,		   desc="Owner for this block";
-    int WaitingUnblocks,           desc="Number of acks we're waiting for";
+    DataBlock DataBlk,             desc="data for the block";
+    NetDest Sharers,                   desc="Sharers for this block";
+    NetDest Owner,                     desc="Owner of this block";
+    NetDest Forwarder, 			desc="Forwarder";
   }
 
-  structure(TBE, desc="...") {
-    Address PhysicalAddress,   desc="Physical address for this entry";
-    int Len,           desc="Length of request";
-    DataBlock DataBlk, desc="DataBlk";
-    MachineID Requestor, desc="original requestor";
+  // TBE entries for DMA requests
+  structure(TBE, desc="TBE entries for outstanding DMA requests") {
+    Address PhysicalAddress, desc="physical address";
+    State TBEState,        desc="Transient State";
+    DataBlock DataBlk,     desc="Data to be written (DMA write only)";
+    MachineID requestor,	   desc="...";
+    int Len,               desc="...";
   }
-
-  structure(TBETable, external = "yes") {
-    TBE lookup(Address);
-    void allocate(Address);
+    
+  structure(TBETable, external="yes") {
+    TBE lookup(Address);  
+    void allocate(Address); 
     void deallocate(Address);
     bool isPresent(Address);
-  }
+  } 
+
 
   // ** OBJECTS **
+
   TBETable TBEs, template_hack="<Directory_TBE>";
 
-  void set_tbe(TBE b);
+  void set_tbe(TBE tbe);
   void unset_tbe();
-
+  void wakeUpBuffers(Address a);
+      
   Entry getDirectoryEntry(Address addr), return_by_pointer="yes" {
     Entry dir_entry := static_cast(Entry, "pointer", directory[addr]);
 
@@ -140,53 +152,54 @@ machine(Directory, "MESIF directory")
   }
 
   State getState(TBE tbe, Address addr) {
-    return getDirectoryEntry(addr).DirectoryState;
+    if (is_valid(tbe)) {
+      return tbe.TBEState;   
+    } else if (directory.isPresent(addr)) {
+      return getDirectoryEntry(addr).DirectoryState;
+    } else {
+      return State:I;
+    }
   }
+   
 
   void setState(TBE tbe, Address addr, State state) {
-    if (directory.isPresent(addr)) {
 
-      if (state == State:I) {
+    if (is_valid(tbe)) {
+      tbe.TBEState := state;
+    }
+  
+    if (directory.isPresent(addr)) {
+  
+      if (state == State:I)  {
         assert(getDirectoryEntry(addr).Owner.count() == 0);
         assert(getDirectoryEntry(addr).Sharers.count() == 0);
-      }
-
-      if (state == State:S) {
-        assert(getDirectoryEntry(addr).Owner.count() == 0);
-      }
-
-      if (state == State:F) {
-	      //some asserts as well
-      }
-
-      if (state == State:M) {
+      } else if (state == State:M) {
         assert(getDirectoryEntry(addr).Owner.count() == 1);
         assert(getDirectoryEntry(addr).Sharers.count() == 0);
       }
-
-      if ((state != State:SS)) {
-        assert(getDirectoryEntry(addr).WaitingUnblocks == 0);
-      }
-
-      if ( (getDirectoryEntry(addr).DirectoryState != State:I) && (state == State:I) ) {
-        getDirectoryEntry(addr).DirectoryState := state;
-         // disable coherence checker 20.04: what the hell?
-        // sequencer.checkCoherence(addr);
-      }
-      else {
-        getDirectoryEntry(addr).DirectoryState := state;
-      }
+      
+      getDirectoryEntry(addr).DirectoryState := state;
     }
   }
 
   AccessPermission getAccessPermission(Address addr) {
-    if (directory.isPresent(addr)) {
+    TBE tbe := TBEs[addr];
+    if(is_valid(tbe)) {
+      DPRINTF(RubySlicc, "%s\n", Directory_State_to_permission(tbe.TBEState));
+      return Directory_State_to_permission(tbe.TBEState);
+    }
+
+    if(directory.isPresent(addr)) {
       DPRINTF(RubySlicc, "%s\n", Directory_State_to_permission(getDirectoryEntry(addr).DirectoryState));
       return Directory_State_to_permission(getDirectoryEntry(addr).DirectoryState);
     }
 
-    DPRINTF(RubySlicc, "AccessPermission_NotPresent\n");
+    DPRINTF(RubySlicc, "%s\n", AccessPermission:NotPresent);
     return AccessPermission:NotPresent;
+  }
+
+  DataBlock getDataBlock(Address addr), return_by_ref="yes" {
+    return getDirectoryEntry(addr).DataBlk;
   }
 
   void setAccessPermission(Address addr, State state) {
@@ -195,98 +208,133 @@ machine(Directory, "MESIF directory")
     }
   }
 
-  DataBlock getDataBlock(Address addr), return_by_ref="yes" {
-    return getDirectoryEntry(addr).DataBlk;
+  bool isGETRequest(CoherenceRequestType type) {
+    return (type == CoherenceRequestType:GETS) ||
+      (type == CoherenceRequestType:GETX);
   }
 
-  // if no sharers, then directory can be considered both a sharer and exclusive w.r.t. coherence checking
-  bool isBlockShared(Address addr) {
-    if (directory.isPresent(addr)) {
-      if (getDirectoryEntry(addr).DirectoryState == State:I) {
-        return true;
-      }
-    }
-    return false;
+  bool isHome(Address address) {
+     DPRINTF(RubySlicc, "isHOME: %s %s\n", map_Address_to_Directory(address),  idToMachineID(MachineType:Directory, id));
+     return map_Address_to_Directory(address) == idToMachineID(MachineType:Directory, id);
   }
 
-  bool isBlockExclusive(Address addr) {
-    if (directory.isPresent(addr)) {
-      if (getDirectoryEntry(addr).DirectoryState == State:I) {
-        return true;
-      }
-    }
-    return false;
+  Event mapReqEventToHomeEvent(CoherenceRequestType type, bool L3) {
+	if (L3) {
+		if (type ==  CoherenceRequestType:GETS) {
+			return Event:GETS_H;
+		} else if (type == CoherenceRequestType:GETX) {
+			return Event:GETX_H;
+		} else if (type == CoherenceRequestType:PUTX) {
+			return Event:PUTX_H;
+		} else {
+			error("Bad request\n");
+		}
+	} else {
+		if (type ==  CoherenceRequestType:GETS) {
+			return Event:GETS_R;
+		} else if (type == CoherenceRequestType:GETX) {
+			return Event:GETX_R;
+		} else if (type == CoherenceRequestType:PUTX) {
+			return Event:PUTX_R;
+		} else {
+			error("Bad request\n");
+		}
+	}
   }
 
+  Event mapReqEventToNonHomeEvent(CoherenceRequestType type, bool fromDir) {
+	if (fromDir) {
+		if (type ==  CoherenceRequestType:GETS) {
+			return Event:GETS_S;
+		} else if (type == CoherenceRequestType:GETX) {
+			return Event:GETX_S;
+		} else if (type == CoherenceRequestType:PUTX) {
+			return Event:PUTX_S;
+		} else {
+			error("Bad request\n");
+		}
+
+	}
+	else {
+		if (type ==  CoherenceRequestType:GETS) {
+			return Event:GETS_O;
+		} else if (type == CoherenceRequestType:GETX) {
+			return Event:GETX_O;
+		} else if (type == CoherenceRequestType:PUTX) {
+			return Event:PUTX_O;
+		} else {
+			error("Bad request\n");
+		}
+  }	}
 
   // ** OUT_PORTS **
-  out_port(forwardNetwork_out, RequestMsg, forwardFromDir);
   out_port(responseNetwork_out, ResponseMsg, responseFromDir);
-//  out_port(requestQueue_out, ResponseMsg, requestFromDir); // For recycling requests
-  out_port(goo1_out, ResponseMsg, goo1);
+  out_port(requestNetwork_out, RequestMsg, requestFromDir);
   out_port(memQueue_out, MemoryMsg, memBuffer);
 
   // ** IN_PORTS **
 
-  in_port(foo1_in, ResponseMsg, foo1) { //Eh?
-
-  }
-
-  // in_port(unblockNetwork_in, ResponseMsg, unblockToDir) {
-  //  if (unblockNetwork_in.isReady()) {
-  in_port(unblockNetwork_in, ResponseMsg, responseToDir) {
-    if (unblockNetwork_in.isReady()) {
-      peek(unblockNetwork_in, ResponseMsg) {
-        if (in_msg.Type == CoherenceResponseType:UNBLOCK) {
-          if (getDirectoryEntry(in_msg.Address).WaitingUnblocks == 1) {
-            trigger(Event:Last_Response, in_msg.Address,
-                    TBEs[in_msg.Address]);
-          } else {
-            trigger(Event:Response, in_msg.Address,
-                    TBEs[in_msg.Address]);
-          }
-//        } else if (in_msg.Type == CoherenceResponseType:UNBLOCK_EXCLUSIVE) {
-//          trigger(Event:Exclusive_Unblock, in_msg.Address,
-//                  TBEs[in_msg.Address]);
-        } else if (in_msg.Type == CoherenceResponseType:WRITEBACK_DIRTY_DATA) {
-          trigger(Event:Dirty_Writeback, in_msg.Address,
-                  TBEs[in_msg.Address]);
-        } else if (in_msg.Type == CoherenceResponseType:WRITEBACK_CLEAN_ACK) {
-          trigger(Event:Clean_Writeback, in_msg.Address,
-                  TBEs[in_msg.Address]);
-        } else if (in_msg.Type == CoherenceResponseType:DATA_EXCLUSIVE) {
-          trigger(Event:Data, in_msg.Address,
-                  TBEs[in_msg.Address]);
-        } else if (in_msg.Type == CoherenceResponseType:DMA_ACK) {
-          trigger(Event:DMA_ACK, in_msg.Address,
-                  TBEs[in_msg.Address]);
-        } else {
-          error("Invalid message");
-        }
-      }
+  in_port(requestNetwork_in, RequestMsg, requestToDir, rank = 0) {
+    if (requestNetwork_in.isReady()) {
+      peek(requestNetwork_in, RequestMsg) {
+        assert(in_msg.Destination.isElement(machineID));
+        if (isHome(in_msg.Address)) {
+		trigger(mapReqEventToHomeEvent(in_msg.Type, machineIDToMachineType(in_msg.Requestor) == MachineType:L3Cache), in_msg.Address, TBEs[in_msg.Address]);
+	} else {
+		trigger(mapReqEventToNonHomeEvent(in_msg.Type, machineIDToMachineType(in_msg.Requestor) == MachineType:Directory), in_msg.Address, TBEs[in_msg.Address]);
+	}
     }
-  }
+  }}
 
-  in_port(requestQueue_in, RequestMsg, requestToDir) {
-    if (requestQueue_in.isReady()) {
-      peek(requestQueue_in, RequestMsg) {
-        if (in_msg.Type == CoherenceRequestType:GETS) {
-          trigger(Event:GETS, in_msg.Address, TBEs[in_msg.Address]);
-        } else if (in_msg.Type == CoherenceRequestType:GETX) {
-          trigger(Event:GETX, in_msg.Address, TBEs[in_msg.Address]);
-        } else if (in_msg.Type == CoherenceRequestType:PUTX) {
-          trigger(Event:PUTX, in_msg.Address, TBEs[in_msg.Address]);
-//        } else if (in_msg.Type == CoherenceRequestType:PUTO) {
-//          trigger(Event:PUTO, in_msg.Address, TBEs[in_msg.Address]);
-//        } else if (in_msg.Type == CoherenceRequestType:PUTO_SHARERS) {
-//          trigger(Event:PUTO_SHARERS, in_msg.Address, TBEs[in_msg.Address]);
-        } else if (in_msg.Type == CoherenceRequestType:DMA_READ) {
-          trigger(Event:DMA_READ, makeLineAddress(in_msg.Address),
-                  TBEs[makeLineAddress(in_msg.Address)]);
-        } else if (in_msg.Type == CoherenceRequestType:DMA_WRITE) {
-          trigger(Event:DMA_WRITE, makeLineAddress(in_msg.Address),
-                  TBEs[makeLineAddress(in_msg.Address)]);
-        } else {
+  in_port(responseNetwork_in, ResponseMsg, responseToDir, rank = 1) {
+    if (responseNetwork_in.isReady()) {
+      peek(responseNetwork_in, ResponseMsg) {
+        assert(in_msg.Destination.isElement(machineID));
+        if (in_msg.Type == CoherenceResponseType:MEMORY_DATA) {
+          trigger(Event:Data_Home, in_msg.Address, TBEs[in_msg.Address]);
+        } else if (in_msg.Type == CoherenceResponseType:RESPONSE_DATA) {
+          trigger(Event:Data, in_msg.Address, TBEs[in_msg.Address]);
+        } else if (in_msg.Type == CoherenceResponseType:RESPONSE) {
+          trigger(Event:Response, in_msg.Address, TBEs[in_msg.Address]);
+        } else if (in_msg.Type == CoherenceResponseType:END_REQUEST) {
+          trigger(Event:End_Request, in_msg.Address, TBEs[in_msg.Address]);
+        } else if (in_msg.Type == CoherenceResponseType:ACK) {
+          trigger(Event:CleanReplacement, in_msg.Address, TBEs[in_msg.Address]);
+        } else if (in_msg.Type == CoherenceResponseType:WRITEBACK_DIRTY_DATA) {
+		if (machineIDToMachineType(in_msg.Sender) == MachineType:Directory) {
+          		trigger(Event:WB_Data_CA, in_msg.Address, TBEs[in_msg.Address]);
+		} else {
+          		trigger(Event:WB_Data_Local, in_msg.Address, TBEs[in_msg.Address]);
+		}
+        } else if (in_msg.Type == CoherenceResponseType:WRITEBACK_CLEAN_ACK) {
+		if (machineIDToMachineType(in_msg.Sender) == MachineType:Directory) {
+			assert(isHome(in_msg.Address));
+			if (getState(TBEs[in_msg.Address], in_msg.Address) == State:F) {
+				assert(getDirectoryEntry(in_msg.Address).Forwarder.isElement(in_msg.Sender));
+				if (getDirectoryEntry(in_msg.Address).Sharers.count() > 0) {
+					//There are other sharers to transfer the F state to
+					if (getDirectoryEntry(in_msg.Address).Sharers.isElement(machineID)) {
+		          			trigger(Event:WB_Ack_CA_is_Sharer, in_msg.Address, TBEs[in_msg.Address]);
+					} else {
+		          			trigger(Event:WB_Ack_CA_Other, in_msg.Address, TBEs[in_msg.Address]);
+					}
+				} else {
+	          			trigger(Event:WB_Ack_CA_Last, in_msg.Address, TBEs[in_msg.Address]);
+				}
+			} else {
+	          		trigger(Event:WB_Ack_CA, in_msg.Address, TBEs[in_msg.Address]);
+			}
+		} else {
+          		trigger(Event:WB_Ack_Local, in_msg.Address, TBEs[in_msg.Address]);
+		}
+        } else if (in_msg.Type == CoherenceResponseType:MEMORY_ACK) {
+	if (machineIDToMachineType(in_msg.Sender) == MachineType:Directory) {
+          trigger(Event:Memory_Ack_CA, in_msg.Address, TBEs[in_msg.Address]);
+	} else {
+		error("Invalid response ack");
+	}
+	} else {
+          DPRINTF(RubySlicc, "%s\n", in_msg.Type);
           error("Invalid message");
         }
       }
@@ -294,13 +342,13 @@ machine(Directory, "MESIF directory")
   }
 
   // off-chip memory request/response is done
-  in_port(memQueue_in, MemoryMsg, memBuffer) {
+  in_port(memQueue_in, MemoryMsg, memBuffer, rank = 2) {
     if (memQueue_in.isReady()) {
       peek(memQueue_in, MemoryMsg) {
         if (in_msg.Type == MemoryRequestType:MEMORY_READ) {
           trigger(Event:Memory_Data, in_msg.Address, TBEs[in_msg.Address]);
         } else if (in_msg.Type == MemoryRequestType:MEMORY_WB) {
-          trigger(Event:Memory_Ack, in_msg.Address, TBEs[in_msg.Address]);
+          trigger(Event:Memory_Ack_Local, in_msg.Address, TBEs[in_msg.Address]);
         } else {
           DPRINTF(RubySlicc, "%s\n", in_msg.Type);
           error("Invalid message");
@@ -309,606 +357,473 @@ machine(Directory, "MESIF directory")
     }
   }
 
+
+  action (setTBERequestor, desc="") {
+	peek(requestNetwork_in, RequestMsg) {
+	tbe.requestor := in_msg.Requestor;
+}
+  }
+
+
+  action (setTBERequestorFromRest, desc="") {
+	peek(responseNetwork_in, ResponseMsg) {
+	tbe.requestor := in_msg.Sender;
+}
+  }
   // Actions
-
-  action(a_sendWriteBackAck, "a", desc="Send writeback ack to requestor") {
-    peek(requestQueue_in, RequestMsg) {
-      enqueue(forwardNetwork_out, RequestMsg, latency=directory_latency) {
+  action(a_sendAck, "a", desc="Send ack to L2") {
+    peek(responseNetwork_in, ResponseMsg) {
+      enqueue(responseNetwork_out, ResponseMsg, latency=to_mem_ctrl_latency) {
         out_msg.Address := address;
-        out_msg.Type := CoherenceRequestType:WB_ACK;
-        out_msg.Requestor := in_msg.Requestor;
-        out_msg.RequestorMachine := MachineType:Directory;
-        out_msg.Destination.add(in_msg.Requestor);
-        out_msg.MessageSize := MessageSizeType:Writeback_Control;
+        out_msg.Type := CoherenceResponseType:MEMORY_ACK;
+        out_msg.Sender := machineID;
+        out_msg.Destination.add(in_msg.Sender);
+        out_msg.MessageSize := MessageSizeType:Response_Control;
       }
     }
   }
 
-  action(b_sendWriteBackNack, "b", desc="Send writeback nack to requestor") {
-    peek(requestQueue_in, RequestMsg) {
-      enqueue(forwardNetwork_out, RequestMsg, latency=directory_latency) {
-        out_msg.Address := address;
-        out_msg.Type := CoherenceRequestType:WB_NACK;
-        out_msg.Requestor := in_msg.Requestor;
-        out_msg.RequestorMachine := MachineType:Directory;
-        out_msg.Destination.add(in_msg.Requestor);
-        out_msg.MessageSize := MessageSizeType:Writeback_Control;
-      }
-    }
-  }
-
-  action(c_clearOwner, "c", desc="Clear the owner field") {
-    getDirectoryEntry(address).Owner.clear();
-  }
-
-  action(c_moveOwnerToSharer, "cc", desc="Move owner to sharers") {
-    getDirectoryEntry(address).Sharers.addNetDest(getDirectoryEntry(address).Owner);
-    getDirectoryEntry(address).Owner.clear();
-  }
-
-  action(c_moveForwarderToSharer, "ccc", desc="Move forwarder to sharers, set a new forwarder") {
-    getDirectoryEntry(address).Sharers.addNetDest(getDirectoryEntry(address).Forwarder);
-    getDirectoryEntry(address).Forwarder.clear();
-  }
-
-  action(cc_clearSharers, "\c", desc="Clear the sharers field") {
-    getDirectoryEntry(address).Sharers.clear();
-  }
-
-  action(d_sendDataMsg, "d", desc="Send data to requestor") { //to another directory
+  action(d_sendData, "d", desc="Send data to requestor") {
     peek(memQueue_in, MemoryMsg) {
-      enqueue(responseNetwork_out, ResponseMsg, latency="1") {
+      enqueue(responseNetwork_out, ResponseMsg, latency=to_mem_ctrl_latency) {
         out_msg.Address := address;
+        out_msg.Type := CoherenceResponseType:MEMORY_DATA;
         out_msg.Sender := machineID;
-        out_msg.SenderMachine := MachineType:Directory;
         out_msg.Destination.add(in_msg.OriginalRequestorMachId);
-        //out_msg.DataBlk := getDirectoryEntry(in_msg.Address).DataBlk;
         out_msg.DataBlk := in_msg.DataBlk;
-        out_msg.Dirty := false; // By definition, the block is now clean
-        out_msg.Acks := in_msg.Acks;
-        if (in_msg.ReadX) {
-          out_msg.Type := CoherenceResponseType:DATA_EXCLUSIVE;
-        } else {
-          out_msg.Type := CoherenceResponseType:DATA;
-        }
+        out_msg.Dirty := false;
         out_msg.MessageSize := MessageSizeType:Response_Data;
       }
     }
   }
 
-  action(p_fwdDataToDMA, "\d", desc="Send data to requestor") {
-    peek(requestQueue_in, RequestMsg) {
-      enqueue(responseNetwork_out, ResponseMsg, latency="1") {
+  action(do_sendDataToOwner, "do", desc="Send data to requestor") {
+    peek(memQueue_in, MemoryMsg) {
+      enqueue(responseNetwork_out, ResponseMsg, latency=to_mem_ctrl_latency) {
         out_msg.Address := address;
+        out_msg.Type := CoherenceResponseType:MEMORY_DATA;
         out_msg.Sender := machineID;
-        out_msg.SenderMachine := MachineType:Directory;
-        out_msg.Destination.add(in_msg.Requestor);
-        out_msg.DataBlk := getDirectoryEntry(in_msg.Address).DataBlk;
-        out_msg.Dirty := false; // By definition, the block is now clean
-        out_msg.Type := CoherenceResponseType:DATA_EXCLUSIVE;
+        out_msg.Destination := getDirectoryEntry(in_msg.Address).Owner;
+        out_msg.DataBlk := in_msg.DataBlk;
+        out_msg.Dirty := false;
+        out_msg.MessageSize := MessageSizeType:Response_Data;
+      }
+    }
+  }
+
+  action(d_sendDataToTBERequestor, "ds", desc="Send data to requestor") {
+    peek(responseNetwork_in, ResponseMsg) {
+      enqueue(responseNetwork_out, ResponseMsg, latency=to_mem_ctrl_latency) {
+        out_msg.Address := address;
+        out_msg.Type := CoherenceResponseType:MEMORY_DATA;
+        out_msg.Sender := machineID;
+        out_msg.Destination.add(tbe.requestor);
+        out_msg.DataBlk := in_msg.DataBlk;
+        out_msg.Dirty := in_msg.Dirty;
+        out_msg.MessageSize := MessageSizeType:Response_Data;
+      }
+    }
+  }
+
+   action(da_sendMemAckToTBERequestor, "da", desc="Send data to requestor") {
+    peek(responseNetwork_in, ResponseMsg) {
+      enqueue(responseNetwork_out, ResponseMsg, latency=to_mem_ctrl_latency) {
+        out_msg.Address := address;
+        out_msg.Type := CoherenceResponseType:MEMORY_ACK;
+        out_msg.Sender := machineID;
+        out_msg.Destination.add(tbe.requestor);
+        out_msg.DataBlk := in_msg.DataBlk;
+        out_msg.Dirty := in_msg.Dirty;
         out_msg.MessageSize := MessageSizeType:Response_Data;
       }
     }
   }
 
 
-
-  action(e_ownerIsUnblocker, "e", desc="The owner is now the unblocker") {
-    peek(unblockNetwork_in, ResponseMsg) {
-      getDirectoryEntry(address).Owner.clear();
-      getDirectoryEntry(address).Owner.add(in_msg.Sender);
-    }
-  }
-
-  action(f_forwardRequest, "f", desc="Forward request to owner") {
-    peek(requestQueue_in, RequestMsg) {
-      enqueue(forwardNetwork_out, RequestMsg, latency=directory_latency) {
-        out_msg.Address := address;
-        out_msg.Type := in_msg.Type;
-        out_msg.Requestor := in_msg.Requestor;
-        out_msg.RequestorMachine := machineIDToMachineType(in_msg.Requestor);
-        out_msg.Destination.addNetDest(getDirectoryEntry(in_msg.Address).Owner);
-        out_msg.Acks := getDirectoryEntry(address).Sharers.count();
-        if (getDirectoryEntry(address).Sharers.isElement(in_msg.Requestor)) {
-          out_msg.Acks := out_msg.Acks - 1;
-        }
-        out_msg.MessageSize := MessageSizeType:Forwarded_Control;
-      }
-    }
-  }
-
-  action(f_forwardRequestDirIsRequestor, "\f", desc="Forward request to owner") {
-    peek(requestQueue_in, RequestMsg) {
-      enqueue(forwardNetwork_out, RequestMsg, latency=directory_latency) {
+  action(sendSnoopToCA, desc="sdaF") {
+    peek(requestNetwork_in, RequestMsg) {
+    enqueue(requestNetwork_out, RequestMsg) {
         out_msg.Address := address;
         out_msg.Type := in_msg.Type;
         out_msg.Requestor := machineID;
-        out_msg.RequestorMachine := machineIDToMachineType(in_msg.Requestor);
-        out_msg.Destination.addNetDest(getDirectoryEntry(in_msg.Address).Owner);
-        out_msg.Acks := getDirectoryEntry(address).Sharers.count();
-        if (getDirectoryEntry(address).Sharers.isElement(in_msg.Requestor)) {
-          out_msg.Acks := out_msg.Acks - 1;
-        }
-        out_msg.MessageSize := MessageSizeType:Forwarded_Control;
+        out_msg.Destination.add(map_Address_to_Directory(address));
+        out_msg.MessageSize := MessageSizeType:Request_Control;
+  }
+}}
+
+  action(conditionalDeforwardify, desc="") {
+	peek(responseNetwork_in, ResponseMsg) {
+	if (isHome(in_msg.Address) == false) {
+		//send mem ack to home node to delete this node as a forwarder
+		enqueue(responseNetwork_out, ResponseMsg) {
+        		out_msg.Address := in_msg.Address;
+			out_msg.Sender := machineID;
+			out_msg.Type := CoherenceResponseType:WRITEBACK_CLEAN_ACK;
+        		out_msg.Destination.add(map_Address_to_Directory(address));
+        		out_msg.MessageSize := MessageSizeType:Response_Control;
+		}
+	}
+  }
+}
+  action(sendRequestToCA, desc="sdaF") {
+    peek(requestNetwork_in, RequestMsg) {
+    enqueue(requestNetwork_out, RequestMsg) {
+        out_msg.Address := address;
+        out_msg.Type := in_msg.Type;
+        out_msg.Requestor := machineID;
+        out_msg.Destination.add(map_Address_to_Directory(address));
+        out_msg.MessageSize := MessageSizeType:Request_Control;
+  }
+}}
+
+  // Actions
+  action(aa_sendAck, "aa", desc="Send ack to L2") {
+    peek(memQueue_in, MemoryMsg) {
+      enqueue(responseNetwork_out, ResponseMsg, latency=to_mem_ctrl_latency) {
+        out_msg.Address := address;
+        out_msg.Type := CoherenceResponseType:MEMORY_ACK;
+        out_msg.Sender := machineID;
+        out_msg.Destination.add(in_msg.OriginalRequestorMachId);
+        out_msg.MessageSize := MessageSizeType:Response_Control;
       }
     }
   }
 
-  action(g_sendInvalidations, "g", desc="Send invalidations to sharers, not including the requester") {
-    peek(requestQueue_in, RequestMsg) {
-      if ((getDirectoryEntry(in_msg.Address).Sharers.count() > 1) ||
-          ((getDirectoryEntry(in_msg.Address).Sharers.count() > 0) && (getDirectoryEntry(in_msg.Address).Sharers.isElement(in_msg.Requestor) == false))) {
-        enqueue(forwardNetwork_out, RequestMsg, latency=directory_latency) {
-          out_msg.Address := address;
-          out_msg.Type := CoherenceRequestType:INV;
-          out_msg.Requestor := in_msg.Requestor;
-          out_msg.RequestorMachine := machineIDToMachineType(in_msg.Requestor);
-          // out_msg.Destination := getDirectoryEntry(in_msg.Address).Sharers;
-          out_msg.Destination.addNetDest(getDirectoryEntry(in_msg.Address).Sharers);
-          out_msg.Destination.remove(in_msg.Requestor);
-          out_msg.MessageSize := MessageSizeType:Invalidate_Control;
-        }
-      }
-    }
+  action(j_popIncomingRequestQueue, "j", desc="Pop incoming request queue") {
+    requestNetwork_in.dequeue();
   }
 
-  action(i_popIncomingRequestQueue, "i", desc="Pop incoming request queue") {
-    requestQueue_in.dequeue();
+  action(k_popIncomingResponseQueue, "k", desc="Pop incoming request queue") {
+    responseNetwork_in.dequeue();
   }
 
-  action(j_popIncomingUnblockQueue, "j", desc="Pop incoming unblock queue") {
-    unblockNetwork_in.dequeue();
-  }
-
-  action(l_writeDataToMemory, "l", desc="Write PUTX data to memory") {
-    peek(unblockNetwork_in, ResponseMsg) {
-      assert(in_msg.Dirty);
-      assert(in_msg.MessageSize == MessageSizeType:Writeback_Data);
-      getDirectoryEntry(in_msg.Address).DataBlk := in_msg.DataBlk;
-      DPRINTF(RubySlicc, "Address: %s, Data Block: %s\n",
-              in_msg.Address, in_msg.DataBlk);
-    }
-  }
-
-  action(p_writeFwdDataToMemory, "p", desc="Write Response data to memory") {
-     peek(unblockNetwork_in, ResponseMsg) {
-      getDirectoryEntry(in_msg.Address).DataBlk := in_msg.DataBlk;
-      DPRINTF(RubySlicc, "Address: %s, Data Block: %s\n",
-              in_msg.Address, in_msg.DataBlk);
-    }
- }
-
-  action(ll_checkDataInMemory, "\ld", desc="Check PUTX data is same as in the memory") {
-    peek(unblockNetwork_in, ResponseMsg) {
-      assert(in_msg.Dirty == false);
-      assert(in_msg.MessageSize == MessageSizeType:Writeback_Control);
-
-      // NOTE: The following check would not be valid in a real
-      // implementation.  We include the data in the "dataless"
-      // message so we can assert the clean data matches the datablock
-      // in memory
-      assert(getDirectoryEntry(in_msg.Address).DataBlk == in_msg.DataBlk);
-    }
-  }
-
-  action(m_addUnlockerToSharers, "m", desc="Add the unlocker to the sharer list") {
-    peek(unblockNetwork_in, ResponseMsg) {
-      getDirectoryEntry(address).Sharers.add(in_msg.Sender);
-    }
-  }
-
-  action(n_incrementOutstanding, "n", desc="Increment outstanding requests") {
-    getDirectoryEntry(address).WaitingUnblocks := getDirectoryEntry(address).WaitingUnblocks + 1;
-  }
-
-  action(o_decrementOutstanding, "o", desc="Decrement outstanding requests") {
-    getDirectoryEntry(address).WaitingUnblocks := getDirectoryEntry(address).WaitingUnblocks - 1;
-    assert(getDirectoryEntry(address).WaitingUnblocks >= 0);
-  }
-
-  action(q_popMemQueue, "q", desc="Pop off-chip request queue") {
+  action(l_popMemQueue, "q", desc="Pop off-chip request queue") {
     memQueue_in.dequeue();
   }
 
+  action(kd_wakeUpDependents, "kd", desc="wake-up dependents") {
+    wakeUpBuffers(address);
+  }
+
   action(qf_queueMemoryFetchRequest, "qf", desc="Queue off-chip fetch request") {
-    peek(requestQueue_in, RequestMsg) {
-      enqueue(memQueue_out, MemoryMsg, latency="1") {
+    peek(requestNetwork_in, RequestMsg) {
+      enqueue(memQueue_out, MemoryMsg, latency=to_mem_ctrl_latency) {
         out_msg.Address := address;
         out_msg.Type := MemoryRequestType:MEMORY_READ;
         out_msg.Sender := machineID;
         out_msg.OriginalRequestorMachId := in_msg.Requestor;
-        out_msg.DataBlk := getDirectoryEntry(in_msg.Address).DataBlk;
         out_msg.MessageSize := in_msg.MessageSize;
-        //out_msg.Prefetch := false;
-        // These are not used by memory but are passed back here with the read data:
-        out_msg.ReadX := (in_msg.Type == CoherenceRequestType:GETS && getDirectoryEntry(address).Sharers.count() == 0);
-        out_msg.Acks := getDirectoryEntry(address).Sharers.count();
-        if (getDirectoryEntry(address).Sharers.isElement(in_msg.Requestor)) {
-          out_msg.Acks := out_msg.Acks - 1;
-        }
+        out_msg.Prefetch := in_msg.Prefetch;
+        out_msg.DataBlk := getDirectoryEntry(in_msg.Address).DataBlk;
+
         DPRINTF(RubySlicc, "%s\n", out_msg);
       }
     }
   }
 
   action(qw_queueMemoryWBRequest, "qw", desc="Queue off-chip writeback request") {
-    peek(unblockNetwork_in, ResponseMsg) {
-      enqueue(memQueue_out, MemoryMsg, latency="1") {
+    peek(responseNetwork_in, ResponseMsg) {
+      enqueue(memQueue_out, MemoryMsg, latency=to_mem_ctrl_latency) {
         out_msg.Address := address;
         out_msg.Type := MemoryRequestType:MEMORY_WB;
         out_msg.Sender := machineID;
-        if (is_valid(tbe)) {
-          out_msg.OriginalRequestorMachId := tbe.Requestor;
-        }
+        out_msg.OriginalRequestorMachId := in_msg.Sender;
         out_msg.DataBlk := in_msg.DataBlk;
         out_msg.MessageSize := in_msg.MessageSize;
-        //out_msg.Prefetch := false;
-        // Not used:
-        out_msg.ReadX := false;
-        out_msg.Acks := getDirectoryEntry(address).Sharers.count();  // for dma requests
+        //out_msg.Prefetch := in_msg.Prefetch;
+
         DPRINTF(RubySlicc, "%s\n", out_msg);
       }
     }
   }
 
-  action(qw_queueMemoryWBRequest2, "/qw", desc="Queue off-chip writeback request") {
-    peek(requestQueue_in, RequestMsg) {
-      enqueue(memQueue_out, MemoryMsg, latency="1") {
+  action(m_writeDataToMemory, "m", desc="Write dirty writeback to memory") {
+    peek(responseNetwork_in, ResponseMsg) {
+      getDirectoryEntry(in_msg.Address).DataBlk := in_msg.DataBlk;
+      DPRINTF(RubySlicc, "Address: %s, Data Block: %s\n",
+              in_msg.Address, in_msg.DataBlk);
+    }
+  }
+  action(qw_queueMemoryWBRequest_partial, "qwp", desc="Queue off-chip writeback request") {
+     peek(requestNetwork_in, RequestMsg) {
+      enqueue(memQueue_out, MemoryMsg, latency=to_mem_ctrl_latency) {
         out_msg.Address := address;
         out_msg.Type := MemoryRequestType:MEMORY_WB;
-        out_msg.Sender := machineID;
-        out_msg.OriginalRequestorMachId := in_msg.Requestor;
-        out_msg.DataBlk := in_msg.DataBlk;
+        out_msg.OriginalRequestorMachId := machineID;
+        //out_msg.DataBlk := in_msg.DataBlk;
+        out_msg.DataBlk.copyPartial(in_msg.DataBlk, addressOffset(address), in_msg.Len);
+
+
         out_msg.MessageSize := in_msg.MessageSize;
-        //out_msg.Prefetch := false;
-        // Not used:
-        out_msg.ReadX := false;
-        out_msg.Acks := getDirectoryEntry(address).Sharers.count();  // for dma requests
+        //out_msg.Prefetch := in_msg.Prefetch;
+
         DPRINTF(RubySlicc, "%s\n", out_msg);
       }
     }
   }
 
 
-  //  action(z_stall, "z", desc="Cannot be handled right now.") {
-    // Special name recognized as do nothing case
-  //  }
-
-  action(zz_recycleRequest, "\z", desc="Recycle the request queue") {
-    requestQueue_in.recycle();
+  action(z_stallAndWaitRequest, "z", desc="recycle request queue") {
+    stall_and_wait(requestNetwork_in, address);
   }
 
-  action(a_sendDMAAck, "\a", desc="Send DMA Ack that write completed, along with Inv Ack count") {
-    peek(requestQueue_in, RequestMsg) {
-      enqueue(responseNetwork_out, ResponseMsg, latency="1") {
+  action(zz_recycleDMAQueue, "zz", desc="recycle DMA queue") {
+    requestNetwork_in.recycle();
+  }
+
+
+  action(e_ownerIsRequestor, "e", desc="The owner is now the requestor") {
+    peek(requestNetwork_in, RequestMsg) {
+      getDirectoryEntry(address).Owner.clear();
+      getDirectoryEntry(address).Owner.add(in_msg.Requestor);
+    }
+  }
+
+  action(ef_forwarderIsRequestor, "ef", desc="The owner is now the requestor") {
+    peek(requestNetwork_in, RequestMsg) {
+      getDirectoryEntry(address).Forwarder.clear();
+      getDirectoryEntry(address).Forwarder.add(in_msg.Requestor);
+    }
+  }
+
+  action(efh_forwarderIsHome, "efh", desc="The owner is now the requestor") {
+    peek(requestNetwork_in, RequestMsg) {
+      getDirectoryEntry(address).Forwarder.clear();
+      getDirectoryEntry(address).Forwarder.add(map_Address_to_Directory(in_msg.Address));
+    }
+  }
+
+  action(ew_ownerIsThisNode, "ew", desc="") {
+      getDirectoryEntry(address).Owner.clear();
+      getDirectoryEntry(address).Owner.add(idToMachineID(MachineType:Directory, id));
+  }
+
+  action(inv_sendCacheInvalidate, "inv", desc="Invalidate a cache block") {
+    peek(requestNetwork_in, RequestMsg) {
+      enqueue(responseNetwork_out, ResponseMsg, latency=directory_latency) {
       out_msg.Address := address;
+      out_msg.Type := CoherenceResponseType:INV;
       out_msg.Sender := machineID;
-      out_msg.SenderMachine := MachineType:Directory;
-      out_msg.Destination.add(in_msg.Requestor);
-      out_msg.DataBlk := in_msg.DataBlk;
-      out_msg.Acks := getDirectoryEntry(address).Sharers.count();  // for dma requests
-      out_msg.Type := CoherenceResponseType:DMA_ACK;
-      out_msg.MessageSize := MessageSizeType:Writeback_Control;
+      out_msg.Destination := getDirectoryEntry(address).Owner;
+      out_msg.MessageSize := MessageSizeType:Response_Control;
       }
     }
   }
 
-  action(a_sendDMAAck2, "\aa", desc="Send DMA Ack that write completed, along with Inv Ack count") {
-    peek(unblockNetwork_in, ResponseMsg) {
-      enqueue(responseNetwork_out, ResponseMsg, latency="1") {
-      out_msg.Address := address;
-      out_msg.Sender := machineID;
-      out_msg.SenderMachine := MachineType:Directory;
-      if (is_valid(tbe)) {
-        out_msg.Destination.add(tbe.Requestor);
-      }
-      out_msg.DataBlk := in_msg.DataBlk;
-      out_msg.Acks := getDirectoryEntry(address).Sharers.count();  // for dma requests
-      out_msg.Type := CoherenceResponseType:DMA_ACK;
-      out_msg.MessageSize := MessageSizeType:Writeback_Control;
-      }
-    }
+
+  action(c_clearOwner, "c", desc="Clear the owner field") {
+    getDirectoryEntry(address).Owner.clear();
   }
 
-  action(l_writeDMADataToMemory, "\l", desc="Write data from a DMA_WRITE to memory") {
-    peek(requestQueue_in, RequestMsg) {
-      getDirectoryEntry(address).DataBlk.copyPartial(in_msg.DataBlk, addressOffset(in_msg.Address), in_msg.Len);
-    }
-  }
+  action(cf_clearForwarder, "cf", desc="") {
+    getDirectoryEntry(address).Forwarder.clear();
+	}
 
-  action(l_writeDMADataToMemoryFromTBE, "\ll", desc="Write data from a DMA_WRITE to memory") {
-    assert(is_valid(tbe));
-    getDirectoryEntry(address).DataBlk.copyPartial(tbe.DataBlk, 
-                      addressOffset(tbe.PhysicalAddress), tbe.Len);
-  }
-
-  action(v_allocateTBE, "v", desc="Allocate TBE entry") {
-    peek (requestQueue_in, RequestMsg) {
+  action(v_allocateTBE, "v", desc="Allocate TBE") {
+    peek(requestNetwork_in, RequestMsg) {
       TBEs.allocate(address);
-      set_tbe(TBEs[address]);
-      tbe.PhysicalAddress := in_msg.Address;
-      tbe.Len := in_msg.Len;
+      set_tbe(TBEs[address]); 
       tbe.DataBlk := in_msg.DataBlk;
-      tbe.Requestor := in_msg.Requestor;
+      tbe.PhysicalAddress := in_msg.Address;
+      tbe.Len := in_msg.Len; 
     }
   }
 
-  action(w_deallocateTBE, "w", desc="Deallocate TBE entry") {
-    TBEs.deallocate(address);
+  action(vr_allocateTBE, "vr", desc="Allocate TBE") {
+    peek(responseNetwork_in, ResponseMsg) {
+      TBEs.allocate(address);
+      set_tbe(TBEs[address]); 
+      tbe.DataBlk := in_msg.DataBlk;
+      tbe.PhysicalAddress := in_msg.Address;
+    }
+}
+  action(relayResponseToHome, desc="...") {
+    peek(responseNetwork_in, ResponseMsg) {
+	enqueue(responseNetwork_out, ResponseMsg) {
+		      out_msg.Address := address;
+        out_msg.Sender := machineID;
+	out_msg.Type := in_msg.Type;
+        out_msg.Destination.add(map_Address_to_Directory(in_msg.Address));
+	out_msg.DataBlk := in_msg.DataBlk;
+	out_msg.Dirty := in_msg.Dirty;
+        out_msg.MessageSize := in_msg.MessageSize;
+	}
+  }
+}
+
+
+  action(qw_queueMemoryWBRequest_partialTBE, "qwt", desc="Queue off-chip writeback request") {
+    peek(responseNetwork_in, ResponseMsg) {
+      enqueue(memQueue_out, MemoryMsg, latency=to_mem_ctrl_latency) {
+        assert(is_valid(tbe));
+        out_msg.Address := address;
+        out_msg.Type := MemoryRequestType:MEMORY_WB;
+        out_msg.OriginalRequestorMachId := in_msg.Sender;
+        //out_msg.DataBlk := in_msg.DataBlk;
+        //out_msg.DataBlk.copyPartial(tbe.DataBlk, tbe.Offset, tbe.Len);
+        out_msg.DataBlk.copyPartial(tbe.DataBlk, addressOffset(tbe.PhysicalAddress), tbe.Len);
+ 
+        out_msg.MessageSize := in_msg.MessageSize;
+        //out_msg.Prefetch := in_msg.Prefetch;
+   
+        DPRINTF(RubySlicc, "%s\n", out_msg);
+      }
+    }
+  }
+
+  action(w_deallocateTBE, "w", desc="Deallocate TBE") {
+    TBEs.deallocate(address); 
     unset_tbe();
   }
 
-
+  action(assertResNotHome, desc="") {
+    peek(responseNetwork_in, ResponseMsg) {
+	assert(isHome(in_msg.Address) == false);
+    }
+  }
 
   // TRANSITIONS
 
-  transition(I, {GETX, GETX_Other}, MM) {
+
+  transition(I, {GETX_H}, IM_M) { // value is only in memory
     qf_queueMemoryFetchRequest;
-    i_popIncomingRequestQueue;
+    e_ownerIsRequestor;
+    j_popIncomingRequestQueue;
   }
 
-  transition(I, DMA_READ, XI_M) {
+  transition(I, {GETX_R}, IMS_M) { // value is only in memory
     qf_queueMemoryFetchRequest;
-    i_popIncomingRequestQueue;
+    e_ownerIsRequestor;
+    j_popIncomingRequestQueue;
   }
 
-  transition(I, DMA_WRITE, XI_U) {
-    qw_queueMemoryWBRequest2;
-    a_sendDMAAck;  // ack count may be zero
-    l_writeDMADataToMemory;
-    i_popIncomingRequestQueue;
+  transition(I, {GETS_R}, IF_M) { // value is only in memory, we're home, and we're in I
+    qf_queueMemoryFetchRequest;
+    ef_forwarderIsRequestor;
+    j_popIncomingRequestQueue;
   }
 
-  transition(XI_M, Memory_Data, I) {
-    d_sendDataMsg;  // ack count may be zero
-    q_popMemQueue;
+  transition(IMS_M, Memory_Data, M) {
+    do_sendDataToOwner;
+    l_popMemQueue;
+    kd_wakeUpDependents;
   }
 
-  transition(XI_U, Exclusive_Unblock, I) { //''response message'' from the article
-    cc_clearSharers;
+  transition(IM_M, Memory_Data, M) {
+    d_sendData;
+    l_popMemQueue;
+    kd_wakeUpDependents;
+  }
+
+  transition(I, GETS_H, IE_M) {
+    qf_queueMemoryFetchRequest;
+    e_ownerIsRequestor;
+    j_popIncomingRequestQueue;
+  }
+
+  transition(IE_M, Memory_Data, E) {
+    d_sendData;
+    l_popMemQueue;
+    kd_wakeUpDependents;
+  }
+
+  transition(IF_M, Memory_Data, F) {
+    d_sendData;
+    l_popMemQueue;
+    kd_wakeUpDependents;
+  }
+
+  transition(IF_S, Data_Home, F) {
+	d_sendDataToTBERequestor;
+	w_deallocateTBE;
+    k_popIncomingResponseQueue;
+  }
+
+//added by SS
+  transition({M, E}, CleanReplacement, I) {
     c_clearOwner;
-    j_popIncomingUnblockQueue;
+    a_sendAck;
+    k_popIncomingResponseQueue;
   }
 
-  transition(S, GETX, MM) {
-    qf_queueMemoryFetchRequest;
-    g_sendInvalidations;
-    i_popIncomingRequestQueue;
+  transition(M, {WB_Data_Local, WB_Data_CA}, XI_M) {
+    m_writeDataToMemory;
+    qw_queueMemoryWBRequest;
+    k_popIncomingResponseQueue;
   }
 
-  transition(S, DMA_READ) {
-    //qf_queueMemoryFetchRequest;
-    p_fwdDataToDMA;
-    //g_sendInvalidations;  // the DMA will collect the invalidations then send an Unblock Exclusive
-    i_popIncomingRequestQueue;
+  transition(XI_M, Memory_Ack_Local, I) {
+    c_clearOwner;
+    aa_sendAck;
+    l_popMemQueue;
+    kd_wakeUpDependents;
   }
 
-  transition(S, DMA_WRITE, XI_U) {
-    qw_queueMemoryWBRequest2;
-    a_sendDMAAck;  // ack count may be zero
-    l_writeDMADataToMemory;
-    g_sendInvalidations;  // the DMA will collect invalidations
-    i_popIncomingRequestQueue;
-  }
-
-  transition(I, GETS, IS) { //TODO go to exclusive, used to be IS
-    qf_queueMemoryFetchRequest;
-    i_popIncomingRequestQueue;
-  }
-
-  transition({S, SS, F}, GETS, SS) {
-    qf_queueMemoryFetchRequest;
-    n_incrementOutstanding;
-    i_popIncomingRequestQueue;
-  }
-
-  transition({I, S, F}, PUTX) {
-    b_sendWriteBackNack;
-    i_popIncomingRequestQueue;
-  }
-
-  //TODO tady to je spatne
-  transition(M, DMA_WRITE, XI_U) {
-    f_forwardRequestDirIsRequestor;    // need the modified data before we can proceed
-    g_sendInvalidations;               // these go to the DMA Controller
+  transition(I, GETX_O, IM_S) {
+    sendRequestToCA;
     v_allocateTBE;
-    i_popIncomingRequestQueue;
+    setTBERequestor;
+    j_popIncomingRequestQueue;
   }
 
-  transition(OI_D, Data, XI_U) {
+  transition(I, GETS_O, IF_S) {
+    sendRequestToCA;
+    v_allocateTBE;
+    setTBERequestor;
+    j_popIncomingRequestQueue;
+  }
+
+  transition(IM_S, Data_Home, M) {
+	d_sendDataToTBERequestor;
+	w_deallocateTBE;
+    k_popIncomingResponseQueue;
+  }
+
+  transition(I, {WB_Data_Local, WB_Ack_Local}, IWB_H) {
+	vr_allocateTBE;
+	assertResNotHome;
+	setTBERequestorFromRest;
+	relayResponseToHome;
+        k_popIncomingResponseQueue;
+  }
+
+  transition(E, WB_Ack_Local, I) {
+	c_clearOwner;
+	a_sendAck;
+	k_popIncomingResponseQueue;
+  }
+
+  transition(F, WB_Ack_Local, I) {
+	conditionalDeforwardify;
+	cf_clearForwarder;
+	a_sendAck;
+	k_popIncomingResponseQueue;
+  }
+
+  transition(F, WB_Ack_CA_Last, I) {
+	a_sendAck;
+	cf_clearForwarder;
+	k_popIncomingResponseQueue;
+  }
+
+  transition(F, WB_Ack_CA_is_Sharer, F) {
+	a_sendAck;
+	efh_forwarderIsHome;
+	k_popIncomingResponseQueue;
+  }
+
+  transition(E, WB_Data_Local, XI_M) {
+    m_writeDataToMemory;
     qw_queueMemoryWBRequest;
-    a_sendDMAAck2;  // ack count may be zero
-    p_writeFwdDataToMemory;
-    l_writeDMADataToMemoryFromTBE;
-    w_deallocateTBE;
-    j_popIncomingUnblockQueue;
+    k_popIncomingResponseQueue;
   }
 
-  transition(M, GETX, MM) {
-    f_forwardRequest;
-    i_popIncomingRequestQueue;
-  }
 
-  transition(M, GETX_Other, MI) {
-	  todo;
-  }
-
-  // no exclusive unblock will show up to the directory
-  transition(M, DMA_READ, MD) {
-    f_forwardRequest;     // this will cause the data to go to DMA directly
-    i_popIncomingRequestQueue;
-  }
-
-  transition(MD, DMA_ACK, M) {
-    j_popIncomingUnblockQueue;
-  }
-
-  transition(M, GETS) {
-	  //todo data from L3
-  }
-
-  transition(M, GETS_Other, MIS) {
-  }
-
-  transition(M, GETS, M) {
-	  //TODO send exclusive to L3, right?
-//    f_forwardRequest;
-//    i_popIncomingRequestQueue;
-  }
-
-  transition(M, PUTX, MI) {
-    a_sendWriteBackAck;
-    i_popIncomingRequestQueue;
-  }
-
-  // happens if M->O transition happens on-chip
-//  transition(M, PUTO, MI) {
-//    a_sendWriteBackAck;
-//    i_popIncomingRequestQueue;
-//  }
-
-//  transition(M, PUTO_SHARERS, MIS) {
-//    a_sendWriteBackAck;
-//    i_popIncomingRequestQueue;
-//  }
-
-//  transition(O, PUTO, OS) {
-//    a_sendWriteBackAck;
-//    i_popIncomingRequestQueue;
-//  }
-
-//  transition(O, PUTO_SHARERS, OSS) {
-//    a_sendWriteBackAck;
-//    i_popIncomingRequestQueue;
-//  }
-
-
-  transition({MM, MO, MI, MIS, OS, OSS, XI_M, XI_U, OI_D, OD, MD}, {GETS, GETX, PUTX, DMA_READ, DMA_WRITE}) {
-    zz_recycleRequest;
-  }
-
-  transition({MM}, Exclusive_Response, M) {
-    cc_clearSharers;
-    e_ownerIsUnblocker;
-    j_popIncomingUnblockQueue;
-  }
-
-  transition(MO, Unblock, O) {
-    m_addUnlockerToSharers;
-    j_popIncomingUnblockQueue;
-  }
-
-  transition({IS, SS, OO}, {GETX, PUTX, DMA_READ, DMA_WRITE}) {
-    zz_recycleRequest;
-  }
-
-  transition(IS, GETS) {
-    zz_recycleRequest;
-  }
-
-  transition(IS, Unblock, S) {
-    m_addUnlockerToSharers;
-    j_popIncomingUnblockQueue;
-  }
-
-  transition(IS, Exclusive_Unblock, M) {
-    cc_clearSharers;
-    e_ownerIsUnblocker;
-    j_popIncomingUnblockQueue;
-  }
-
-  transition(SS, Unblock) {
-    m_addUnlockerToSharers;
-    o_decrementOutstanding;
-    j_popIncomingUnblockQueue;
-  }
-
-  transition(SS, Last_Unblock, S) {
-    m_addUnlockerToSharers;
-    o_decrementOutstanding;
-    j_popIncomingUnblockQueue;
-  }
-
-  transition(OO, Unblock) {
-    m_addUnlockerToSharers;
-    o_decrementOutstanding;
-    j_popIncomingUnblockQueue;
-  }
-
-  transition(OO, Last_Unblock, O) {
-    m_addUnlockerToSharers;
-    o_decrementOutstanding;
-    j_popIncomingUnblockQueue;
-  }
-
-  transition(MI, Dirty_Writeback, I) {
-    c_clearOwner;
-    cc_clearSharers;
-    l_writeDataToMemory;
-    qw_queueMemoryWBRequest;
-    j_popIncomingUnblockQueue;
-  }
-
-  transition(MIS, Dirty_Writeback, S) {
-    c_moveOwnerToSharer;
-    l_writeDataToMemory;
-    qw_queueMemoryWBRequest;
-    j_popIncomingUnblockQueue;
-  }
-
-  transition(MIS, Clean_Writeback, S) {
-    c_moveOwnerToSharer;
-    j_popIncomingUnblockQueue;
-  }
-
-  transition(OS, Dirty_Writeback, S) {
-    c_clearOwner;
-    l_writeDataToMemory;
-    qw_queueMemoryWBRequest;
-    j_popIncomingUnblockQueue;
-  }
-
-  transition(OSS, Dirty_Writeback, S) {
-    c_moveOwnerToSharer;
-    l_writeDataToMemory;
-    qw_queueMemoryWBRequest;
-    j_popIncomingUnblockQueue;
-  }
-
-  transition(OSS, Clean_Writeback, S) {
-    c_moveOwnerToSharer;
-    j_popIncomingUnblockQueue;
-  }
-
-  transition(MI, Clean_Writeback, I) {
-    c_clearOwner;
-    cc_clearSharers;
-    ll_checkDataInMemory;
-    j_popIncomingUnblockQueue;
-  }
-
-  transition(OS, Clean_Writeback, S) {
-    c_clearOwner;
-    ll_checkDataInMemory;
-    j_popIncomingUnblockQueue;
-  }
-
-  transition({MI, MIS}, Unblock, M) {
-    j_popIncomingUnblockQueue;
-  }
-
-  transition({OS, OSS}, Unblock, O) {
-    j_popIncomingUnblockQueue;
-  }
-
-  transition({I, S, O, M, IS, SS, OO, MO, MM, MI, MIS, OS, OSS}, Memory_Data) {
-    d_sendDataMsg;
-    q_popMemQueue;
-  }
-
-  transition({I, S, O, M, IS, SS, OO, MO, MM, MI, MIS, OS, OSS, XI_U, XI_M}, Memory_Ack) {
-    //a_sendAck;
-    q_popMemQueue;
+  transition(IWB_H, Memory_Ack_CA, I) {
+	da_sendMemAckToTBERequestor;
+	w_deallocateTBE;
+	k_popIncomingResponseQueue;
+	kd_wakeUpDependents;
   }
 
 }

@@ -50,6 +50,7 @@ machine(DMA, "DMA Controller")
 
   in_port(dmaRequestQueue_in, SequencerMsg, mandatoryQueue, desc="...") {
     if (dmaRequestQueue_in.isReady()) {
+	DPRINTF(RubySlicc, "DMA REQ\n");
       peek(dmaRequestQueue_in, SequencerMsg) {
         if (in_msg.Type == SequencerRequestType:LD ) {
           trigger(Event:ReadRequest, in_msg.LineAddress);
