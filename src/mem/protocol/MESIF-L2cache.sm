@@ -86,6 +86,8 @@ machine(L2Cache, "MESIF Directory L2 Cache Multicore")
     WB_Data,  desc="data from L1";
     WB_Data_clean,  desc="clean data from L1";
     Ack,      desc="writeback ack";
+    Ack_L3,      desc="writeback ack";
+    Ack_L3_all,      desc="writeback ack";
     InvAck,      desc="Inv ack";
 
     // internal generated request ??
@@ -366,7 +368,11 @@ machine(L2Cache, "MESIF Directory L2 Cache Multicore")
 	        } else if (in_msg.Type == CoherenceResponseType:WB_ACK) {
         		trigger(Event:WB_Ack, in_msg.Address, cache_entry, tbe);
 	        } else if (in_msg.Type == CoherenceResponseType:ACK) {
-        		trigger(Event:Ack, in_msg.Address, cache_entry, tbe);
+			if (getPendingAcks(tbe) - in_msg.AckCount == 0) {
+	        		trigger(Event:Ack_L3_all, in_msg.Address, cache_entry, tbe);
+			} else {
+	        		trigger(Event:Ack_L3, in_msg.Address, cache_entry, tbe);
+			}
 		} else {
 			DPRINTF(RubySlicc, "%s\n", in_msg);
 			error("unknown message type from L3");
@@ -882,6 +888,18 @@ assert(false);
 }
 }
 
+  action(gx_issueGETX, "gx", desc="send data to the L3 cache") {
+peek(requestIntraChipL2Network_in, RequestMsg) {
+    enqueue(requestIntraChipL2Network_out, RequestMsg, latency=l2_response_latency) {
+      out_msg.Address := in_msg.Address;
+      out_msg.Type := CoherenceRequestType:GETX;
+      out_msg.Requestor:= machineID;
+      out_msg.Destination.add(mapAddressToBank(address, MachineType:L3Cache, low_bit, num_bits));
+        out_msg.MessageSize := MessageSizeType:Request_Control;
+      }
+    }
+}
+
   //*****************************************************
   // TRANSITIONS
   //*****************************************************
@@ -900,8 +918,8 @@ assert(false);
   }
   
   // L1 wants to write to cache block
-  transition(I, L1_GETX, IX) {
-    a_relayRequestToL3;
+  transition(I, {L1_GETX, L1_UPGRADE}, IX) {
+gx_issueGETX;
     oo_allocateL2CacheBlock; // do i need this here, or on hit?
     i_allocateTBE;
     uu_profileDataMiss;
@@ -935,7 +953,7 @@ assert(false);
     popRequestQueue;
   }
 
-  transition(SS_X, {Data_L3, Ack}, EX) {
+  transition(SS_X, {Ack_L3_all}, EX) { //TODO Will not work for more!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
 	sendExclusiveDataToL1;
 	popResponseQueue;
      s_deallocateTBE;
@@ -1029,7 +1047,7 @@ kd_wakeUpDependents;
   transition(IX, Data_L2_all_Acks, EX) { //Got data from all L2s TODO DATA_L2 does not belong here!!!
     u_writeDataToL2CacheFromRespobse;
     s_deallocateTBE;
-    sendResponseToL1;
+    sendExclusiveDataToL1;
     popResponseQueue;
     jj_sendExclusiveUnblock;
     kd_wakeUpDependents;
@@ -1249,8 +1267,9 @@ stall_incoming_l1_requests;
     popRequestQueue;
   }
 
-  transition(ES, Fwd_GETS, S) {
+  transition(ES, {Fwd_GETS, Fwd_GET_INSTR}, S) {
     relayDataToRequestor;
+    d2_sendDataToL3;
     popRequestQueue;
   }
 
