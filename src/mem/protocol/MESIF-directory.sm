@@ -86,6 +86,7 @@ int id,
     GETX_R_NO_SHARERS, desc="GETX from other CA/DIR, we are home node for this line";
     GETX_R_NO_SHARERS_F, desc="GETX from other CA/DIR, we are home node for this line";
     WB_Data_Local, desc="writeback data arrives from L3";
+    WB_Data_Local_O, desc="writeback data arrives from L3";
     WB_Data_CA, desc="writeback data arrives from L3";
     WB_Ack_Local, desc="writeback ack arrives from L3";
     WB_Ack_CA, desc="writeback ack arrives from L3";
@@ -117,7 +118,7 @@ int id,
     DataBlock DataBlk,             desc="data for the block";
     NetDest Sharers,                   desc="Sharers for this block";
     NetDest Owner,                     desc="Owner of this block";
-    NetDest Forwarder, 			desc="Forwarder";
+    MachineID Forwarder, 			desc="Forwarder";
   }
 
   // TBE entries for DMA requests
@@ -239,17 +240,17 @@ int id,
 		if (type ==  CoherenceRequestType:GETS) {
 			return Event:GETS_R;
 		} else if (type == CoherenceRequestType:GETX) {
-			if (getDirectoryEntry(in_msg.Address).Sharers.count() <= 1) {
-				assert(getDirectoryEntry(in_msg.Address).Sharers.intersectionIsNotEmpty(*getDirectoryEntry(in_msg.Address).Forwarder));
-				if (getDirectoryEntry(in_msg.Address).Forwarder.isElement(in_msg.Requestor)) {
+				DPRINTF(RubySlicc, "sharers: %s forwarder: %s\n", getDirectoryEntry(in_msg.Address).Sharers,
+				        getDirectoryEntry(in_msg.Address).Forwarder);
+				if (getDirectoryEntry(in_msg.Address).Forwarder == in_msg.Requestor) {
 					//sharer is
 					return Event:GETX_R_NO_SHARERS_F;
-				} else {
-					return Event:GETX_R_NO_SHARERS;
 				}
-			} else {
-				return Event:GETX_R;
-			}
+				if (getDirectoryEntry(in_msg.Address).Sharers.count() == 0) {
+					return Event:GETX_R_NO_SHARERS;
+				} else {
+					return Event:GETX_R;
+				}
 		} else if (type == CoherenceRequestType:PUTX) {
 			return Event:PUTX_R;
 		} else {
@@ -320,13 +321,17 @@ int id,
 		if (machineIDToMachineType(in_msg.Sender) == MachineType:Directory) {
           		trigger(Event:WB_Data_CA, in_msg.Address, TBEs[in_msg.Address]);
 		} else {
-          		trigger(Event:WB_Data_Local, in_msg.Address, TBEs[in_msg.Address]);
+			if (isHome(in_msg.Address)) {
+	          		trigger(Event:WB_Data_Local, in_msg.Address, TBEs[in_msg.Address]);
+			} else {
+	          		trigger(Event:WB_Data_Local_O, in_msg.Address, TBEs[in_msg.Address]);
+			}
 		}
         } else if (in_msg.Type == CoherenceResponseType:WRITEBACK_CLEAN_ACK) {
 		if (machineIDToMachineType(in_msg.Sender) == MachineType:Directory) {
 			assert(isHome(in_msg.Address));
 			if (getState(TBEs[in_msg.Address], in_msg.Address) == State:F) {
-				assert(getDirectoryEntry(in_msg.Address).Forwarder.isElement(in_msg.Sender));
+				assert(getDirectoryEntry(in_msg.Address).Forwarder == in_msg.Sender);
 				if (getDirectoryEntry(in_msg.Address).Sharers.count() > 0) {
 					//There are other sharers to transfer the F state to
 					if (getDirectoryEntry(in_msg.Address).Sharers.isElement(machineID)) {
@@ -424,6 +429,19 @@ int id,
     }
   }
 
+  action(art_sendTBEDataFromReq, "art", desc="Send ack to L2") {
+    peek(requestNetwork_in, RequestMsg) {
+      enqueue(responseNetwork_out, ResponseMsg, latency=to_mem_ctrl_latency) {
+        out_msg.Address := in_msg.Address;
+	out_msg.DataBlk := tbe.DataBlk;
+        out_msg.Type := CoherenceResponseType:MEMORY_DATA;
+        out_msg.Sender := machineID;
+        out_msg.Destination.add(in_msg.Requestor);
+        out_msg.MessageSize := MessageSizeType:Response_Data;
+      }
+    }
+  }
+
   action(d_sendData, "d", desc="Send data to requestor") {
     peek(memQueue_in, MemoryMsg) {
       enqueue(responseNetwork_out, ResponseMsg, latency=to_mem_ctrl_latency) {
@@ -455,6 +473,12 @@ int id,
   action(dos_saveDataFromMemory, "dos", desc="Send data to requestor") {
     peek(memQueue_in, MemoryMsg) {
 	getDirectoryEntry(address).DataBlk := in_msg.DataBlk;
+    }
+  }
+
+  action(dos_saveDataFromMemoryToTBE, "dost", desc="Send data to requestor") {
+    peek(responseNetwork_in, ResponseMsg) {
+	tbe.DataBlk := in_msg.DataBlk;
     }
   }
 
@@ -512,7 +536,6 @@ int id,
 		}
 	} else {
 		getDirectoryEntry(in_msg.Address).Sharers.clear();
-		getDirectoryEntry(in_msg.Address).Forwarder.clear();
 		getDirectoryEntry(in_msg.Address).Owner.clear();
 	}
   }
@@ -633,14 +656,12 @@ int id,
 
   action(ef_forwarderIsRequestor, "ef", desc="The owner is now the requestor") {
     peek(requestNetwork_in, RequestMsg) {
-      getDirectoryEntry(address).Forwarder.clear();
-      getDirectoryEntry(address).Forwarder.add(in_msg.Requestor);
+      getDirectoryEntry(address).Forwarder := in_msg.Requestor;
     }
   }
 
   action(efh_forwarderIsHome, "efh", desc="The owner is now the requestor") {
-      getDirectoryEntry(address).Forwarder.clear();
-      getDirectoryEntry(address).Forwarder.add(map_Address_to_Directory(address));
+      getDirectoryEntry(address).Forwarder := (map_Address_to_Directory(address));
   }
 
   action(ew_ownerIsThisNode, "ew", desc="") {
@@ -667,30 +688,14 @@ int id,
       out_msg.Type := CoherenceResponseType:INV;
       out_msg.Sender := machineID;
       out_msg.Destination := getDirectoryEntry(address).Sharers;
-      out_msg.Destination.removeNetDest(getDirectoryEntry(address).Forwarder);
+      out_msg.Destination.remove(getDirectoryEntry(address).Forwarder);
       out_msg.MessageSize := MessageSizeType:Response_Control;
-    }
-  }
-
-  action(inf_sendCacheInvalidateToForwarder, "inv", desc="Invalidate a cache block") {
-    peek(requestNetwork_in, RequestMsg) {
-      enqueue(responseNetwork_out, ResponseMsg, latency=directory_latency) {
-      out_msg.Address := address;
-      out_msg.Type := CoherenceResponseType:INV;
-      out_msg.Sender := machineID;
-      out_msg.Destination := getDirectoryEntry(address).Forwarder;
-      out_msg.MessageSize := MessageSizeType:Response_Control;
-      }
     }
   }
 
   action(c_clearOwner, "c", desc="Clear the owner field") {
     getDirectoryEntry(address).Owner.clear();
   }
-
-  action(cf_clearForwarder, "cf", desc="") {
-    getDirectoryEntry(address).Forwarder.clear();
-	}
 
   action(cs_clearSharers, "cs", desc="") {
     getDirectoryEntry(address).Sharers.clear();
@@ -833,8 +838,8 @@ int id,
   }
 
   transition(IF_S, Data_Home, F) {
+	dos_saveDataFromMemoryToTBE;
 	d_sendDataToTBERequestor;
-//	w_deallocateTBE; has to stay, or the stupid controller will go to I
     k_popIncomingResponseQueue;
   }
 
@@ -872,8 +877,13 @@ int id,
   }
 
   transition(FM_H, Memory_Ack_CA, M) {
-	da_sendMemAckToTBERequestor;
+	d_sendDataToTBERequestor;
 	w_deallocateTBE;
+	k_popIncomingResponseQueue;
+  }
+
+  transition(F, GETS_O, F) {
+	art_sendTBEDataFromReq;
 	k_popIncomingResponseQueue;
   }
 
@@ -885,8 +895,8 @@ int id,
   }
 
   transition(IM_S, Data_Home, M) {
+	dos_saveDataFromMemoryToTBE;
 	d_sendDataToTBERequestor;
-	w_deallocateTBE;
     k_popIncomingResponseQueue;
   }
 
@@ -898,22 +908,37 @@ int id,
         k_popIncomingResponseQueue;
   }
 
+  transition(M, WB_Data_Local_O) {
+	dos_saveDataFromMemoryToTBE;
+	a_sendAck;
+	k_popIncomingResponseQueue;
+  }
+
+  transition(M, {GETX_O, GETS_O}) {
+	art_sendTBEDataFromReq;
+	j_popIncomingRequestQueue;
+  }
+
+  transition(M, WB_Ack_Local) {
+	a_sendAck;
+	k_popIncomingResponseQueue;
+  }
+
   transition(E, WB_Ack_Local, I) {
 	c_clearOwner;
 	a_sendAck;
 	k_popIncomingResponseQueue;
   }
 
-  transition(F, WB_Ack_Local, I) {
-	conditionalDeforwardify;
+  transition(F, WB_Ack_Local, F) {
+//	conditionalDeforwardify;
 	a_sendAck;
-	w_deallocateTBE;
+//	w_deallocateTBE;
 	k_popIncomingResponseQueue;
   }
 
   transition(F, WB_Ack_CA_Last, I) {
 	c_clearOwner;
-	cf_clearForwarder;
 	efh_forwarderIsHome;
 	k_popIncomingResponseQueue;
   }
