@@ -36,16 +36,16 @@ from m5.defines import buildEnv
 # Note: the L1 Cache latency is only used by the sequencer on fast path hits
 #
 class L1Cache(RubyCache):
-    latency = 3
+    latency = 1
 
 #
 # Note: the L2 Cache latency is not currently used
 #
 class L2Cache(RubyCache):
-    latency = 15
+    latency = 1
 
 class L3Cache(RubyCache):
-    latency = 30
+    latency = 1
 
 def define_options(parser):
     return

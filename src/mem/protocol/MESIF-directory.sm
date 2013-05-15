@@ -55,6 +55,7 @@ int id,
     I, AccessPermission:Read_Write, desc=""; //this has to be Read_Write, or else simulation fails
     S, AccessPermission:Read_Only, desc="";
     F, AccessPermission:Read_Only, desc="";
+    FM_H, AccessPermission:Read_Only, desc="";
 
     IM_M, AccessPermission:Busy, desc="";
     IMS_M, AccessPermission:Busy, desc="";
@@ -63,6 +64,7 @@ int id,
     IF_M, AccessPermission:Busy, desc="";
     IM_S, AccessPermission:Busy, desc="";
     IF_S, AccessPermission:Busy, desc="";
+    SI_L3, AccessPermission:Busy, desc="";
 
     IWB_H, AccessPermission:Busy, desc="";
   }
@@ -81,6 +83,8 @@ int id,
     PUTX_R, desc="PUTX from other CA/DIR, we are home home node for this line";
     GETS_R, desc="GETS from other CA/DIR, we are home node for this line";
     GETX_R, desc="GETX from other CA/DIR, we are home node for this line";
+    GETX_R_NO_SHARERS, desc="GETX from other CA/DIR, we are home node for this line";
+    GETX_R_NO_SHARERS_F, desc="GETX from other CA/DIR, we are home node for this line";
     WB_Data_Local, desc="writeback data arrives from L3";
     WB_Data_CA, desc="writeback data arrives from L3";
     WB_Ack_Local, desc="writeback ack arrives from L3";
@@ -91,11 +95,13 @@ int id,
     Memory_Data, desc="Fetched data from memory arrives";
     Memory_Ack_Local, desc="Writeback Ack from memory arrives";
     Memory_Ack_CA, desc="Writeback Ack from memory arrives";
+    Memory_Inv, desc="Writeback Ack from memory arrives";
 //added by SS for dma
     DMA_READ, desc="A DMA Read memory request";
     DMA_WRITE, desc="A DMA Write memory request";
     CleanReplacement, desc="Clean Replacement in L3 cache";
     Data_Home, desc="Clean Replacement in L3 cache";
+    Ack_Home, desc="Clean Replacement in L3 cache";
     Data, desc="Clean Replacement in L3 cache";
     Response, desc="";
     Conflict, desc="";
@@ -218,7 +224,7 @@ int id,
      return map_Address_to_Directory(address) == idToMachineID(MachineType:Directory, id);
   }
 
-  Event mapReqEventToHomeEvent(CoherenceRequestType type, bool L3) {
+  Event mapReqEventToHomeEvent(CoherenceRequestType type, bool L3, RequestMsg in_msg) {
 	if (L3) {
 		if (type ==  CoherenceRequestType:GETS) {
 			return Event:GETS_H;
@@ -233,7 +239,17 @@ int id,
 		if (type ==  CoherenceRequestType:GETS) {
 			return Event:GETS_R;
 		} else if (type == CoherenceRequestType:GETX) {
-			return Event:GETX_R;
+			if (getDirectoryEntry(in_msg.Address).Sharers.count() <= 1) {
+				assert(getDirectoryEntry(in_msg.Address).Sharers.intersectionIsNotEmpty(*getDirectoryEntry(in_msg.Address).Forwarder));
+				if (getDirectoryEntry(in_msg.Address).Forwarder.isElement(in_msg.Requestor)) {
+					//sharer is
+					return Event:GETX_R_NO_SHARERS_F;
+				} else {
+					return Event:GETX_R_NO_SHARERS;
+				}
+			} else {
+				return Event:GETX_R;
+			}
 		} else if (type == CoherenceRequestType:PUTX) {
 			return Event:PUTX_R;
 		} else {
@@ -279,7 +295,7 @@ int id,
       peek(requestNetwork_in, RequestMsg) {
         assert(in_msg.Destination.isElement(machineID));
         if (isHome(in_msg.Address)) {
-		trigger(mapReqEventToHomeEvent(in_msg.Type, machineIDToMachineType(in_msg.Requestor) == MachineType:L3Cache), in_msg.Address, TBEs[in_msg.Address]);
+		trigger(mapReqEventToHomeEvent(in_msg.Type, machineIDToMachineType(in_msg.Requestor) == MachineType:L3Cache, in_msg), in_msg.Address, TBEs[in_msg.Address]);
 	} else {
 		trigger(mapReqEventToNonHomeEvent(in_msg.Type, machineIDToMachineType(in_msg.Requestor) == MachineType:Directory), in_msg.Address, TBEs[in_msg.Address]);
 	}
@@ -328,11 +344,11 @@ int id,
           		trigger(Event:WB_Ack_Local, in_msg.Address, TBEs[in_msg.Address]);
 		}
         } else if (in_msg.Type == CoherenceResponseType:MEMORY_ACK) {
-	if (machineIDToMachineType(in_msg.Sender) == MachineType:Directory) {
+	  assert(machineIDToMachineType(in_msg.Sender) == MachineType:Directory);
           trigger(Event:Memory_Ack_CA, in_msg.Address, TBEs[in_msg.Address]);
-	} else {
-		error("Invalid response ack");
-	}
+        } else if (in_msg.Type == CoherenceResponseType:INV) {
+			assert(isHome(in_msg.Address) == false);
+          trigger(Event:Memory_Inv, in_msg.Address, TBEs[in_msg.Address]);
 	} else {
           DPRINTF(RubySlicc, "%s\n", in_msg.Type);
           error("Invalid message");
@@ -383,7 +399,7 @@ int id,
     }
   }
 
-  action(a_sendAckFromReq, "ar", desc="Send ack to L2") {
+  action(a_sendAckFromReq, "aq", desc="Send ack to L2") {
     peek(requestNetwork_in, RequestMsg) {
       enqueue(responseNetwork_out, ResponseMsg, latency=to_mem_ctrl_latency) {
         out_msg.Address := in_msg.Address;
@@ -391,6 +407,19 @@ int id,
         out_msg.Sender := machineID;
         out_msg.Destination.add(in_msg.Requestor);
         out_msg.MessageSize := MessageSizeType:Response_Control;
+      }
+    }
+  }
+
+  action(ar_sendDataFromReq, "ar", desc="Send ack to L2") {
+    peek(requestNetwork_in, RequestMsg) {
+      enqueue(responseNetwork_out, ResponseMsg, latency=to_mem_ctrl_latency) {
+        out_msg.Address := in_msg.Address;
+	out_msg.DataBlk := getDirectoryEntry(address).DataBlk;
+        out_msg.Type := CoherenceResponseType:MEMORY_DATA;
+        out_msg.Sender := machineID;
+        out_msg.Destination.add(in_msg.Requestor);
+        out_msg.MessageSize := MessageSizeType:Response_Data;
       }
     }
   }
@@ -420,6 +449,12 @@ int id,
         out_msg.Dirty := false;
         out_msg.MessageSize := MessageSizeType:Response_Data;
       }
+    }
+  }
+
+  action(dos_saveDataFromMemory, "dos", desc="Send data to requestor") {
+    peek(memQueue_in, MemoryMsg) {
+	getDirectoryEntry(address).DataBlk := in_msg.DataBlk;
     }
   }
 
@@ -471,9 +506,14 @@ int id,
         		out_msg.Address := in_msg.Address;
 			out_msg.Sender := machineID;
 			out_msg.Type := CoherenceResponseType:WRITEBACK_CLEAN_ACK;
+			DPRINTF(RubySlicc, "Deforward to : %s\n", map_Address_to_Directory(address));
         		out_msg.Destination.add(map_Address_to_Directory(address));
         		out_msg.MessageSize := MessageSizeType:Response_Control;
 		}
+	} else {
+		getDirectoryEntry(in_msg.Address).Sharers.clear();
+		getDirectoryEntry(in_msg.Address).Forwarder.clear();
+		getDirectoryEntry(in_msg.Address).Owner.clear();
 	}
   }
 }
@@ -599,10 +639,8 @@ int id,
   }
 
   action(efh_forwarderIsHome, "efh", desc="The owner is now the requestor") {
-    peek(requestNetwork_in, RequestMsg) {
       getDirectoryEntry(address).Forwarder.clear();
-      getDirectoryEntry(address).Forwarder.add(map_Address_to_Directory(in_msg.Address));
-    }
+      getDirectoryEntry(address).Forwarder.add(map_Address_to_Directory(address));
   }
 
   action(ew_ownerIsThisNode, "ew", desc="") {
@@ -610,7 +648,7 @@ int id,
       getDirectoryEntry(address).Owner.add(idToMachineID(MachineType:Directory, id));
   }
 
-  action(inv_sendCacheInvalidate, "inv", desc="Invalidate a cache block") {
+  action(ino_sendCacheInvalidateToOwner, "ino", desc="Invalidate a cache block") {
     peek(requestNetwork_in, RequestMsg) {
       enqueue(responseNetwork_out, ResponseMsg, latency=directory_latency) {
       out_msg.Address := address;
@@ -623,12 +661,39 @@ int id,
   }
 
 
+  action(insf_sendCacheInvalidateToSharersMinusForwarder, "insf", desc="Invalidate a cache block") {
+      enqueue(responseNetwork_out, ResponseMsg, latency=directory_latency) {
+      out_msg.Address := address;
+      out_msg.Type := CoherenceResponseType:INV;
+      out_msg.Sender := machineID;
+      out_msg.Destination := getDirectoryEntry(address).Sharers;
+      out_msg.Destination.removeNetDest(getDirectoryEntry(address).Forwarder);
+      out_msg.MessageSize := MessageSizeType:Response_Control;
+    }
+  }
+
+  action(inf_sendCacheInvalidateToForwarder, "inv", desc="Invalidate a cache block") {
+    peek(requestNetwork_in, RequestMsg) {
+      enqueue(responseNetwork_out, ResponseMsg, latency=directory_latency) {
+      out_msg.Address := address;
+      out_msg.Type := CoherenceResponseType:INV;
+      out_msg.Sender := machineID;
+      out_msg.Destination := getDirectoryEntry(address).Forwarder;
+      out_msg.MessageSize := MessageSizeType:Response_Control;
+      }
+    }
+  }
+
   action(c_clearOwner, "c", desc="Clear the owner field") {
     getDirectoryEntry(address).Owner.clear();
   }
 
   action(cf_clearForwarder, "cf", desc="") {
     getDirectoryEntry(address).Forwarder.clear();
+	}
+
+  action(cs_clearSharers, "cs", desc="") {
+    getDirectoryEntry(address).Sharers.clear();
 	}
 
   action(v_allocateTBE, "v", desc="Allocate TBE") {
@@ -703,26 +768,41 @@ int id,
     j_popIncomingRequestQueue;
   }
 
-  transition(I, {GETX_R}, IMS_M) { // value is only in memory
+  transition(I, {GETX_R_NO_SHARERS}, IMS_M) { // value is only in memory
     qf_queueMemoryFetchRequest;
     e_ownerIsRequestor;
     j_popIncomingRequestQueue;
   }
 
+  transition(F, GETX_R, SI_L3) { // Other nodes wants data
+     insf_sendCacheInvalidateToSharersMinusForwarder;
+     j_popIncomingRequestQueue;
+  }
+
+  transition(F, GETX_R_NO_SHARERS_F, M) {
+     efh_forwarderIsHome;
+     e_ownerIsRequestor;
+     a_sendAckFromReq;
+     j_popIncomingRequestQueue;
+  }
+
   transition(I, {GETS_R}, IF_M) { // value is only in memory, we're home, and we're in I
     qf_queueMemoryFetchRequest;
     ef_forwarderIsRequestor;
+    e_ownerIsRequestor; //this is a hack, when in forward or in S state, owner tells which L3 has the value
     j_popIncomingRequestQueue;
   }
 
   transition(IMS_M, Memory_Data, M) {
     do_sendDataToOwner;
+    dos_saveDataFromMemory;
     l_popMemQueue;
     kd_wakeUpDependents;
   }
 
   transition(IM_M, Memory_Data, M) {
     d_sendData;
+    dos_saveDataFromMemory;
     l_popMemQueue;
     kd_wakeUpDependents;
   }
@@ -740,19 +820,21 @@ int id,
 
   transition(IE_M, Memory_Data, E) {
     d_sendData;
+    dos_saveDataFromMemory;
     l_popMemQueue;
     kd_wakeUpDependents;
   }
 
   transition(IF_M, Memory_Data, F) {
     d_sendData;
+    dos_saveDataFromMemory;
     l_popMemQueue;
     kd_wakeUpDependents;
   }
 
   transition(IF_S, Data_Home, F) {
 	d_sendDataToTBERequestor;
-	w_deallocateTBE;
+//	w_deallocateTBE; has to stay, or the stupid controller will go to I
     k_popIncomingResponseQueue;
   }
 
@@ -781,6 +863,18 @@ int id,
     v_allocateTBE;
     setTBERequestor;
     j_popIncomingRequestQueue;
+  }
+
+  transition(F, GETX_O, FM_H) {
+	sendRequestToCA;
+    setTBERequestor;
+	j_popIncomingRequestQueue;
+  }
+
+  transition(FM_H, Memory_Ack_CA, M) {
+	da_sendMemAckToTBERequestor;
+	w_deallocateTBE;
+	k_popIncomingResponseQueue;
   }
 
   transition(I, GETS_O, IF_S) {
@@ -812,22 +906,23 @@ int id,
 
   transition(F, WB_Ack_Local, I) {
 	conditionalDeforwardify;
-	cf_clearForwarder;
 	a_sendAck;
+	w_deallocateTBE;
 	k_popIncomingResponseQueue;
   }
 
   transition(F, WB_Ack_CA_Last, I) {
-	a_sendAck;
+	c_clearOwner;
 	cf_clearForwarder;
-	k_popIncomingResponseQueue;
-  }
-
-  transition(F, WB_Ack_CA_is_Sharer, F) {
-	a_sendAck;
 	efh_forwarderIsHome;
 	k_popIncomingResponseQueue;
   }
+
+//  transition(F, WB_Ack_CA_is_Sharer, F) { //TODO remove sharer
+//	a_sendAck;
+//	efh_forwarderIsHome;
+//	k_popIncomingResponseQueue;
+//  }
 
   transition(E, WB_Data_Local, XI_M) {
     m_writeDataToMemory;

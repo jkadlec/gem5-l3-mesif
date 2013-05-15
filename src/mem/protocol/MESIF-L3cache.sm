@@ -34,8 +34,8 @@
 
 machine(L3Cache, "MESIF Directory L3 Cache CMP")
  : CacheMemory * L3cacheMemory,
-   int l3_request_latency = 2,  
-   int l3_response_latency = 2,
+   int l3_request_latency = 1,  
+   int l3_response_latency = 1,
    int to_l3_latency = 1,
    int CaID,
    int nodes
@@ -1192,7 +1192,7 @@ o_popIncomingResponseQueue;
   }
 
   // writeback states
-  transition({I_I, S_I, MT_I, MCT_I, M_I}, {L2_GETX, L2_UPGRADE, L2_GETS, L2_GET_INSTR}) {
+  transition({S_I, I_I, MT_I, MCT_I, M_I}, {L2_GETX, L2_UPGRADE, L2_GETS, L2_GET_INSTR}) {
     zz_stallAndWaitL2RequestQueue;
   }
 

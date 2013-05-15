@@ -32,8 +32,8 @@ machine(L2Cache, "MESIF Directory L2 Cache Multicore")
    int L1ID,
    int banks,
    int num_bits, //?
-   int l2_request_latency = 2,
-   int l2_response_latency = 2,
+   int l2_request_latency = 1,
+   int l2_response_latency = 1,
    int to_l3_latency = 1
 {
 //  MessageBuffer unblockToL2Cache, network="From", virtual_network="2", ordered="false", vnet_type="unblock";
@@ -444,6 +444,22 @@ machine(L2Cache, "MESIF Directory L2 Cache Multicore")
         out_msg.DataBlk := in_msg.DataBlk;
         out_msg.Dirty := in_msg.Dirty;
         out_msg.Destination.add(mapAddressToBank(address, MachineType:L3Cache, low_bit, num_bits));
+        DPRINTF(RubySlicc, "Relay for: address: %s, destination: %s\n",
+                address, out_msg.Destination);
+        out_msg.MessageSize := in_msg.MessageSize;
+      }
+    }
+  }
+
+  action(a_relayResponseToL1, "av1", desc="Relay normal request to L3") {
+    peek(responseIntraChipL2Network_in, ResponseMsg) {
+      enqueue(responseIntraChipL2Network_out, ResponseMsg, latency=l2_request_latency) { // Insert into queue, IntraChip
+        out_msg.Address := address;
+        out_msg.Type := in_msg.Type;
+        out_msg.Sender := machineID;
+        out_msg.DataBlk := in_msg.DataBlk;
+        out_msg.Dirty := in_msg.Dirty;
+        out_msg.Destination.add(idToMachineID(MachineType:L1Cache, L1ID));
         DPRINTF(RubySlicc, "Relay for: address: %s, destination: %s\n",
                 address, out_msg.Destination);
         out_msg.MessageSize := in_msg.MessageSize;
@@ -953,7 +969,7 @@ gx_issueGETX;
     popRequestQueue;
   }
 
-  transition(SS_X, {Ack_L3_all}, EX) { //TODO Will not work for more!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+  transition(SS_X, {Ack_L3_all, Data_L2_all_Acks}, EX) {
 	sendExclusiveDataToL1;
 	popResponseQueue;
      s_deallocateTBE;
@@ -1016,15 +1032,6 @@ kd_wakeUpDependents;
     popResponseQueue;
     s_deallocateTBE;
     jj_sendExclusiveUnblock;
-    kd_wakeUpDependents;
-  }
-
-  transition(IS, Data_L2, SS) {
-    u_writeDataToL2CacheFromRespobse;
-    sendResponseToL1;
-    s_deallocateTBE;
-    popResponseQueue;
-    j_sendUnblock;
     kd_wakeUpDependents;
   }
 
@@ -1255,12 +1262,11 @@ stall_incoming_l1_requests;
 
 //TODOOTASOFDSAOFSAODFASOFAOSFOSADFO SADOFSODAFASOFDA l3 nejriv rekne, kolik ma prijit acku a az pak zacnou chodit?
 
-  transition(IX, Data_L2) { //TODO this should work, but deadlocks on unblock in l3
-    jj_sendExclusiveUnblock;
-    u_writeDataToL2CacheFromRespobse;
-    q_updateAckCount;
-    popResponseQueue;
-  }
+//  transition(IX, Data_L2) { //TODO this should work, but deadlocks on unblock in l3
+//    u_writeDataToL2CacheFromRespobse;
+//    q_updateAckCount;
+//    popResponseQueue;
+//  }
 
   transition(EX, L1_UPGRADE, EX) {
     sendAckToL1;
@@ -1304,9 +1310,30 @@ ff_deallocateL2CacheBlock;
      popResponseQueue;
   }
 
-  transition({IS, IX}, Inv) {
+  transition({IX}, Inv) {
 fi_sendInvAckToL3;
-	popRequestQueue;
+popRequestQueue;
+  }
+
+  transition(IS, Inv, IS_I) {
+fi_sendInvAckToL3;
+ sendInvToL1;
+popRequestQueue;
+  }
+
+  transition(IS_I, Ack) { // all good, no action needed
+	popResponseQueue;
+  }
+
+  transition(IS_I, Data_L3, I) { //L1 will satisfy the read and drop immediately
+a_relayResponseToL1;
+s_deallocateTBE;
+popResponseQueue;
+kd_wakeUpDependents;
+  }
+
+  transition(IS_I, L2_Replacement) {
+stall_incoming_l1_requests;
   }
 
   transition(EX_IACK, {Fwd_GET_INSTR, Fwd_GETS}) {
@@ -1331,6 +1358,8 @@ fi_sendInvAckToL3;
     writeDataToTBEFromResponse;
     t_sendWBAckFromResponse;
     sendDataToRequestor_fromTBE;
+//send valid data to L3
+    d2_sendDataToL3;
     s_deallocateTBE;
     popResponseQueue;
   }
@@ -1341,6 +1370,7 @@ fi_sendInvAckToL3;
     s_deallocateTBE;
     popResponseQueue;
     kd_wakeUpDependents;
+    j_sendUnblock;
   }
 
   transition(SS_X, L2_Replacement) {

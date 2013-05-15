@@ -33,8 +33,8 @@ machine(L1Cache, "MESIF Directory L1 Cache Multicore")
    CacheMemory * L1DcacheMemory,
    int L2ID,
    int l2_select_num_bits,
-   int l1_request_latency = 2,
-   int l1_response_latency = 2,
+   int l1_request_latency = 1,
+   int l1_response_latency = 1,
    int to_l2_latency = 1,
    bool send_evictions
 {
