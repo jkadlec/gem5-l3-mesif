@@ -172,7 +172,7 @@ def create_system(options, system, piobus, dma_ports, ruby_system):
                                       L3cacheMemory = l3_cache,
                                       ruby_system = ruby_system,
 					nodes = options.num_dirs,
-					CaID = i)
+					CaID = i % options.num_dirs)
         exec("system.l3_cntrl%d = l3_cntrl" % i)
         l3_cntrl_nodes.append(l3_cntrl)
         
@@ -210,22 +210,22 @@ def create_system(options, system, piobus, dma_ports, ruby_system):
 
         cntrl_count += 1
 
-#    for i, dma_port in enumerate(dma_ports):
+    for i, dma_port in enumerate(dma_ports):
         #
         # Create the Ruby objects associated with the dma controller
         #
-#        dma_seq = DMASequencer(version = i,
-#                               ruby_system = ruby_system)
-        
-#        dma_cntrl = DMA_Controller(version = i,
-#                                   cntrl_id = cntrl_count,
-#                                   dma_sequencer = dma_seq,
-#                                   ruby_system = ruby_system)
+        dma_seq = DMASequencer(version = i,
+                               ruby_system = ruby_system)
+       
+        dma_cntrl = DMA_Controller(version = i,
+                                  cntrl_id = cntrl_count,
+                                   dma_sequencer = dma_seq,
+                                   ruby_system = ruby_system)
 
-#        exec("system.dma_cntrl%d = dma_cntrl" % i)
-#        exec("system.dma_cntrl%d.dma_sequencer.slave = dma_port" % i)
-#        dma_cntrl_nodes.append(dma_cntrl)
-#        cntrl_count += 1
+        exec("system.dma_cntrl%d = dma_cntrl" % i)
+        exec("system.dma_cntrl%d.dma_sequencer.slave = dma_port" % i)
+        dma_cntrl_nodes.append(dma_cntrl)
+        cntrl_count += 1
 
     all_cntrls = l1_cntrl_nodes + \
                  l2_cntrl_nodes + \

@@ -76,6 +76,7 @@ machine(L3Cache, "MESIF Directory L3 Cache CMP")
     SS_MB_M, AccessPermission:Busy, desc="Blocked for L2_GETX from SS";
     SS_MBU_M, AccessPermission:Busy, desc="Blocked for L2_GETX from SS";
     MT_MB, AccessPermission:Busy, desc="Blocked for L2_GETX from MT"; //Blocks when already in L2, another L2 wants the value
+    MT_M, AccessPermission:Busy, desc="Blocked for L2_GETX from MT"; //Blocks when already in L2, another L2 wants the value
     M_MB, AccessPermission:Busy, desc="Blocked for L2_GETX from M";
 
     MT_IIB, AccessPermission:Busy, desc="Blocked for L2_GETS from MT, waiting for unblock and data";
@@ -139,7 +140,6 @@ machine(L3Cache, "MESIF Directory L3 Cache CMP")
 
     NetDest L2_GetS_IDs,            desc="Set of the internal processors that want the block in shared state";
     MachineID L2_GetX_ID,          desc="ID of the L2 cache to forward the block to once we get a response";
-    bool isPrefetch,            desc="Set if this was caused by a prefetch";
 
     int pendingAcks,            desc="number of pending acks for invalidates during writeback";
   }
@@ -257,7 +257,7 @@ machine(L3Cache, "MESIF Directory L3 Cache CMP")
       return Event:L2_GETX;
     } else if (type == CoherenceRequestType:UPGRADE) {
       if ( is_valid(cache_entry) && cache_entry.Sharers.isElement(requestor) ) {
-        return Event:L2_UPGRADE; // !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!! used to be upgrade, but how do you knot that the value was not evicted in L1
+        return Event:L2_GETX; // !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!! used to be upgrade, but how do you knot that the value was not evicted in L1
       } else {
         return Event:L2_GETX;
       }
@@ -535,6 +535,24 @@ machine(L3Cache, "MESIF Directory L3 Cache CMP")
     }
   }
 
+   action(dt_sendDataToExclusive, "dt", desc="Send data from cache to reqeustor") {
+      enqueue(responseIntraChipL3Network_out, ResponseMsg, latency=l3_response_latency) {
+        assert(is_valid(cache_entry));
+        out_msg.Address := address;
+        out_msg.Type := CoherenceResponseType:DATA;
+        out_msg.Sender := machineID;
+        out_msg.Destination.add(cache_entry.Exclusive);
+        out_msg.DataBlk := cache_entry.DataBlk;
+        out_msg.Dirty := cache_entry.Dirty;
+        out_msg.MessageSize := MessageSizeType:Response_Data;
+
+        out_msg.AckCount := 0 - cache_entry.Sharers.count();
+        if (cache_entry.Sharers.isElement(cache_entry.Exclusive)) {
+          out_msg.AckCount := out_msg.AckCount + 1;
+        }
+      }
+  }
+
   action(dd_sendExclusiveDataToRequestor, "dd", desc="Send data from cache to reqeustor") {
     peek(L2RequestIntraChipL3Network_in, RequestMsg) {
       enqueue(responseIntraChipL3Network_out, ResponseMsg, latency=l3_response_latency) {
@@ -675,9 +693,9 @@ machine(L3Cache, "MESIF Directory L3 Cache CMP")
         assert(is_valid(cache_entry));
         out_msg.Address := address;
         out_msg.Type := CoherenceRequestType:INV;
-        out_msg.Requestor := machineID;//TODO used to be original requestor?
+        out_msg.Requestor := tbe.L2_GetX_ID;//TODO used to be original requestor?
         out_msg.Destination := cache_entry.Sharers;
-        out_msg.Destination.remove(cache_entry.Exclusive);
+        out_msg.Destination.remove(tbe.L2_GetX_ID);
         out_msg.MessageSize := MessageSizeType:Request_Control;
     }
   }
@@ -813,6 +831,18 @@ machine(L3Cache, "MESIF Directory L3 Cache CMP")
       }
   }
 
+  action(tst_sendAckToTBEReq, "tst", desc="Send ACK to upgrader") {
+      enqueue(responseIntraChipL3Network_out, ResponseMsg, latency=to_l3_latency) {
+        out_msg.Address := address;
+        out_msg.Type := CoherenceResponseType:ACK;
+        out_msg.Sender := machineID;
+        out_msg.Destination.add(tbe.L2_GetX_ID);
+        out_msg.MessageSize := MessageSizeType:Response_Control;
+        // upgrader doesn't get ack from itself, hence the + 1
+        out_msg.AckCount := 0 - cache_entry.Sharers.count() + 1;
+      }
+  }
+
   GenericRequestType convertToGenericType(CoherenceRequestType type) {
     if(type == CoherenceRequestType:GETS) {
       return GenericRequestType:GETS;
@@ -890,6 +920,10 @@ machine(L3Cache, "MESIF Directory L3 Cache CMP")
     stall_and_wait(L2RequestIntraChipL3Network_in, address);
   }
 
+  action(zz_stallAndWaitUnblockQueue, "zzbb", desc="recycle L2 request queue") {
+    stall_and_wait(L2unblockNetwork_in, address);
+  }
+
   action(zn_recycleResponseNetwork, "zn", desc="recycle memory request") {
     responseIntraChipL3Network_in.recycle();
   }
@@ -911,17 +945,22 @@ machine(L3Cache, "MESIF Directory L3 Cache CMP")
   // BASE STATE - I
 
   // Transitions from I (Idle)
-  transition({NP, IS, ISS, IM, SS, M, M_I, I_I, S_I, M_MB, MT_IB, MT_SB}, L2_PUTX) {
+  transition({NP, IS, ISS, IM, SS, M, M_I, I_I, S_I, M_MB, MT_IB, MT_SB}, L2_PUTX) { //todo asi taky ne (MT_M)
     t_sendWBAck;    
     jj_popL2RequestQueue;
   }
+
+  transition(MT_M, L2_PUTX) {
+	//other L2 wants to invalidate
+	zz_stallAndWaitL2RequestQueue;
+}
 
   transition({NP, SS, M, MT, M_I, I_I, S_I, IS, ISS, IM, M_MB, MT_IB, MT_SB}, L2_PUTX_old) {
     t_sendWBAck;    
     jj_popL2RequestQueue;
   }
 
-  transition({IM, IS, ISS, SS_MB, M_MB, MT_MB, MT_IIB, MT_IB, MT_SB}, {L3_Replacement, L3_Replacement_clean}) {
+  transition({IM, IS, ISS, SS_MB, M_MB, MT_MB, MT_IIB, MT_IB, MT_SB, MT_M}, {L3_Replacement, L3_Replacement_clean}) { //TODO MT_M possible error (incoher)
     zz_stallAndWaitL2RequestQueue;
   }
 
@@ -931,6 +970,10 @@ machine(L3Cache, "MESIF Directory L3 Cache CMP")
 
   transition({S_I, M_I, MT_I}, MEM_Inv) {         
     o_popIncomingResponseQueue;
+  }
+
+  transition(MT_M, {L2_GETS, L2_GET_INSTR, L2_GETX}) {
+    zz_stallAndWaitL2RequestQueue;
   }
 
 
@@ -1023,34 +1066,32 @@ machine(L3Cache, "MESIF Directory L3 Cache CMP")
   }
 
 
-  transition(SS, L2_GETX, SS_MB_M) {
+  transition(SS, L2_GETX, MT_M) { // we have to: invalidate sharers and let them send data to requesting L2
     set_setMRU;
-	mm_markExclusive;
-	a_issueGETX;
+i_allocateTBE;
+    xx_recordGetXL2ID;
+d_sendDataToRequestor;
+    a_issueGETX;
     jj_popL2RequestQueue;
   }
 
-  transition(SS, L2_UPGRADE, SS_MBU_M) {
-    set_setMRU;
-	mm_markExclusive;
-	a_issueGETX;
-    jj_popL2RequestQueue;
-  }
-
-  transition(SS_MB_M, {Mem_Data, Mem_Ack}, SS_MB) {
-    ddd_sendDataToExclusive;
-    // fw_sendFwdInvToSharers;
-    fwm_sendFwdInvToSharersMinusExclusive;
-    ll_clearSharers;
-o_popIncomingResponseQueue;
+  transition(MT_M, Exclusive_Unblock) {
+zz_stallAndWaitUnblockQueue;
 }
 
-  transition(SS_MBU_M, {Mem_Data, Mem_Ack}, SS_MB) {
-ts_sendInvAckToUpgrader;
+  transition(MT_M, Mem_Ack, MT_MB) {
     fwm_sendFwdInvToSharersMinusExclusive;
-    ll_clearSharers;
-o_popIncomingResponseQueue;
-   }
+s_deallocateTBE;
+kd_wakeUpDependents;
+    o_popIncomingResponseQueue;
+  }
+
+//  transition(SS, L2_UPGRADE, SS_MBU_M) {
+//    set_setMRU;
+//	mm_markExclusive;
+//	a_issueGETX;
+//    jj_popL2RequestQueue;
+//  }
 
   transition(SS, L3_Replacement_clean, I_I) {
     i_allocateTBE;

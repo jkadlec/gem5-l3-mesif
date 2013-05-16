@@ -58,8 +58,19 @@ int id,
     FM_H, AccessPermission:Read_Only, desc="";
 
     IM_M, AccessPermission:Busy, desc="";
+    ID_W, AccessPermission:Busy, desc="";
+    E_DWR, AccessPermission:Busy, desc="";
+    E_DWRI, AccessPermission:Busy, desc="";
+    M_DWR, AccessPermission:Busy, desc="";
+    M_DWRI, AccessPermission:Busy, desc="";
+    M_DRD, AccessPermission:Busy, desc="";
+    M_DRDI, AccessPermission:Busy, desc="";
+    E_DRD, AccessPermission:Busy, desc="";
+    E_DRDI, AccessPermission:Busy, desc="";
+    ID, AccessPermission:Busy, desc="";
     IMS_M, AccessPermission:Busy, desc="";
     XI_M, AccessPermission:Busy, desc="";
+    XI_H, AccessPermission:Busy, desc="";
     IE_M, AccessPermission:Busy, desc="";
     IF_M, AccessPermission:Busy, desc="";
     IM_S, AccessPermission:Busy, desc="";
@@ -233,6 +244,10 @@ int id,
 			return Event:GETX_H;
 		} else if (type == CoherenceRequestType:PUTX) {
 			return Event:PUTX_H;
+		} else if (type == CoherenceRequestType:DMA_WRITE) {
+			return Event:DMA_WRITE;
+		} else if (type == CoherenceRequestType:DMA_READ) {
+			return Event:DMA_READ;
 		} else {
 			error("Bad request\n");
 		}
@@ -253,8 +268,12 @@ int id,
 				}
 		} else if (type == CoherenceRequestType:PUTX) {
 			return Event:PUTX_R;
+		} else if (type == CoherenceRequestType:DMA_WRITE) {
+			return Event:DMA_WRITE;
+		} else if (type == CoherenceRequestType:DMA_READ) {
+			return Event:DMA_READ;
 		} else {
-			error("Bad request\n");
+			error("bad request");
 		}
 	}
   }
@@ -294,6 +313,7 @@ int id,
   in_port(requestNetwork_in, RequestMsg, requestToDir, rank = 0) {
     if (requestNetwork_in.isReady()) {
       peek(requestNetwork_in, RequestMsg) {
+	DPRINTF(RubySlicc, "%s\n", in_msg);
         assert(in_msg.Destination.isElement(machineID));
         if (isHome(in_msg.Address)) {
 		trigger(mapReqEventToHomeEvent(in_msg.Type, machineIDToMachineType(in_msg.Requestor) == MachineType:L3Cache, in_msg), in_msg.Address, TBEs[in_msg.Address]);
@@ -400,6 +420,18 @@ int id,
         out_msg.Sender := machineID;
         out_msg.Destination.add(in_msg.Sender);
         out_msg.MessageSize := MessageSizeType:Response_Control;
+      }
+    }
+  }
+
+  action(drp_sendDMAData, "drp", desc="Send Data to DMA controller from incoming PUTX") {
+    peek(responseNetwork_in, ResponseMsg) {
+      enqueue(responseNetwork_out, ResponseMsg, latency=to_mem_ctrl_latency) {
+        out_msg.Address := address;
+        out_msg.Type := CoherenceResponseType:DATA;
+        out_msg.DataBlk := in_msg.DataBlk;   // we send the entire data block and rely on the dma controller to split it up if need be
+        out_msg.Destination.add(map_Address_to_DMA(address));
+        out_msg.MessageSize := MessageSizeType:Response_Data;
       }
     }
   }
@@ -548,6 +580,17 @@ int id,
         out_msg.Requestor := machineID;
         out_msg.Destination.add(map_Address_to_Directory(address));
         out_msg.MessageSize := MessageSizeType:Request_Control;
+  }
+}}
+
+  action(sendResponseToCA, desc="sdaF") {
+    peek(responseNetwork_in, ResponseMsg) {
+    enqueue(responseNetwork_out, ResponseMsg) {
+        out_msg.Address := address;
+        out_msg.Type := in_msg.Type;
+        out_msg.Sender := machineID;
+        out_msg.Destination.add(map_Address_to_Directory(address));
+        out_msg.MessageSize := in_msg.MessageSize;
   }
 }}
 
@@ -764,6 +807,72 @@ int id,
     }
   }
 
+  action(qf_queueMemoryFetchRequestDMA, "qfd", desc="Queue off-chip fetch request") {
+    peek(requestNetwork_in, RequestMsg) {
+      enqueue(memQueue_out, MemoryMsg, latency=to_mem_ctrl_latency) {
+        out_msg.Address := address;
+        out_msg.Type := MemoryRequestType:MEMORY_READ;
+        out_msg.Sender := machineID;
+        out_msg.OriginalRequestorMachId := machineID;
+        out_msg.MessageSize := in_msg.MessageSize;
+        out_msg.DataBlk := getDirectoryEntry(address).DataBlk;
+        DPRINTF(RubySlicc, "%s\n", out_msg);
+      }
+    }
+  }
+
+  action(p_popIncomingDMARequestQueue, "p", desc="Pop incoming DMA queue") {
+    requestNetwork_in.dequeue();
+  }
+
+  action(dr_sendDMAData, "dr", desc="Send Data to DMA controller from directory") {
+    peek(memQueue_in, MemoryMsg) {
+      enqueue(responseNetwork_out, ResponseMsg, latency=to_mem_ctrl_latency) {
+        out_msg.Address := address;
+        out_msg.Type := CoherenceResponseType:DATA;
+        out_msg.DataBlk := in_msg.DataBlk;   // we send the entire data block and rely on the dma controller to split it up if need be
+        out_msg.Destination.add(map_Address_to_DMA(address));
+        out_msg.MessageSize := MessageSizeType:Response_Data;
+      }
+    }
+  }
+
+  action(dwt_writeDMADataFromTBE, "dwt", desc="DMA Write data to memory from TBE") {
+    assert(is_valid(tbe));
+    //getDirectoryEntry(address).DataBlk.copyPartial(tbe.DataBlk, tbe.Offset, tbe.Len);
+    getDirectoryEntry(address).DataBlk.copyPartial(tbe.DataBlk, addressOffset(tbe.PhysicalAddress), tbe.Len);
+
+
+  }
+
+  action(dw_writeDMAData, "dw", desc="DMA Write data to memory") {
+    peek(requestNetwork_in, RequestMsg) {
+      getDirectoryEntry(address).DataBlk.copyPartial(in_msg.DataBlk, addressOffset(in_msg.Address), in_msg.Len);
+    }
+  }
+
+  action(da_sendDMAAck, "daf", desc="Send Ack to DMA controller") {
+      enqueue(responseNetwork_out, ResponseMsg, latency=to_mem_ctrl_latency) {
+        out_msg.Address := address;
+        out_msg.Type := CoherenceResponseType:ACK;
+        out_msg.Destination.add(map_Address_to_DMA(address));
+        out_msg.MessageSize := MessageSizeType:Writeback_Control;
+      }
+  }
+
+  action(inv_sendCacheInvalidate, "inv", desc="Invalidate a cache block") {
+    peek(requestNetwork_in, RequestMsg) {
+      enqueue(responseNetwork_out, ResponseMsg, latency=directory_latency) {
+      out_msg.Address := address;
+      out_msg.Type := CoherenceResponseType:INV;
+      out_msg.Sender := machineID;
+      out_msg.Destination := getDirectoryEntry(address).Owner;
+      out_msg.MessageSize := MessageSizeType:Response_Control;
+      }
+    }
+  }
+
+
   // TRANSITIONS
 
 
@@ -777,11 +886,6 @@ int id,
     qf_queueMemoryFetchRequest;
     e_ownerIsRequestor;
     j_popIncomingRequestQueue;
-  }
-
-  transition(F, GETX_R, SI_L3) { // Other nodes wants data
-     insf_sendCacheInvalidateToSharersMinusForwarder;
-     j_popIncomingRequestQueue;
   }
 
   transition(F, GETX_R_NO_SHARERS_F, M) {
@@ -838,7 +942,6 @@ int id,
   }
 
   transition(IF_S, Data_Home, F) {
-	dos_saveDataFromMemoryToTBE;
 	d_sendDataToTBERequestor;
     k_popIncomingResponseQueue;
   }
@@ -853,6 +956,11 @@ int id,
   transition(M, {WB_Data_Local, WB_Data_CA}, XI_M) {
     m_writeDataToMemory;
     qw_queueMemoryWBRequest;
+    k_popIncomingResponseQueue;
+  }
+
+  transition(M, {WB_Data_Local_O}, XI_H) {
+    sendResponseToCA;
     k_popIncomingResponseQueue;
   }
 
@@ -882,11 +990,6 @@ int id,
 	k_popIncomingResponseQueue;
   }
 
-  transition(F, GETS_O, F) {
-	art_sendTBEDataFromReq;
-	k_popIncomingResponseQueue;
-  }
-
   transition(I, GETS_O, IF_S) {
     sendRequestToCA;
     v_allocateTBE;
@@ -895,9 +998,13 @@ int id,
   }
 
   transition(IM_S, Data_Home, M) {
-	dos_saveDataFromMemoryToTBE;
 	d_sendDataToTBERequestor;
     k_popIncomingResponseQueue;
+  }
+
+  transition(M, GETX_H) {
+    a_sendAckFromReq;
+    j_popIncomingRequestQueue;
   }
 
   transition(I, {WB_Data_Local, WB_Ack_Local}, IWB_H) {
@@ -908,18 +1015,8 @@ int id,
         k_popIncomingResponseQueue;
   }
 
-  transition(M, WB_Data_Local_O) {
-	dos_saveDataFromMemoryToTBE;
-	a_sendAck;
-	k_popIncomingResponseQueue;
-  }
-
-  transition(M, {GETX_O, GETS_O}) {
-	art_sendTBEDataFromReq;
-	j_popIncomingRequestQueue;
-  }
-
-  transition(M, WB_Ack_Local) {
+  transition(M, WB_Ack_Local, I) {
+	c_clearOwner;
 	a_sendAck;
 	k_popIncomingResponseQueue;
   }
@@ -961,6 +1058,116 @@ int id,
 	w_deallocateTBE;
 	k_popIncomingResponseQueue;
 	kd_wakeUpDependents;
+  }
+
+  transition(M, GETX_O, M) {
+	a_sendAck;
+	j_popIncomingRequestQueue;
+  }
+
+  transition(I, DMA_WRITE, ID_W) {
+    dw_writeDMAData;
+    qw_queueMemoryWBRequest_partial;
+    j_popIncomingRequestQueue;
+  }
+
+  transition(ID_W, Memory_Ack_Local, I) {
+    da_sendDMAAck;
+    l_popMemQueue;
+    kd_wakeUpDependents;
+  }
+
+  transition(I, DMA_READ, ID) {
+    qf_queueMemoryFetchRequestDMA;
+    j_popIncomingRequestQueue;
+  }
+
+  transition(ID, Memory_Data, I) {
+    dr_sendDMAData;
+    l_popMemQueue;
+    kd_wakeUpDependents;
+  }
+
+  transition(E, DMA_WRITE, E_DWR) {
+    v_allocateTBE;
+    inv_sendCacheInvalidate;
+    j_popIncomingRequestQueue;
+  }
+
+  transition(E_DWR, WB_Ack_Local, E_DWRI) {
+    m_writeDataToMemory;
+    qw_queueMemoryWBRequest_partialTBE;
+    k_popIncomingResponseQueue; 
+  }
+
+  transition(E_DWRI, Memory_Ack_Local, I) {
+    dwt_writeDMADataFromTBE;
+    aa_sendAck;
+    c_clearOwner;
+    da_sendDMAAck;
+    w_deallocateTBE;
+    l_popMemQueue;
+    kd_wakeUpDependents;
+  }
+
+  transition(M, DMA_WRITE, M_DWR) {
+    v_allocateTBE;
+    inv_sendCacheInvalidate;
+    j_popIncomingRequestQueue;
+  }
+
+  transition(M_DWR, WB_Data_Local, M_DWRI) {
+    m_writeDataToMemory;
+    qw_queueMemoryWBRequest_partialTBE;
+    k_popIncomingResponseQueue; 
+  }
+
+  transition(M_DWRI, Memory_Ack_Local, I) {
+    dwt_writeDMADataFromTBE;
+    aa_sendAck;
+    c_clearOwner;
+    da_sendDMAAck;
+    w_deallocateTBE;
+    l_popMemQueue;
+    kd_wakeUpDependents;
+  }
+
+  transition(M, DMA_READ, M_DRD) {
+    inv_sendCacheInvalidate;
+    j_popIncomingRequestQueue;
+  }
+
+  transition(M_DRD, WB_Data_Local, M_DRDI) {
+    drp_sendDMAData;
+    m_writeDataToMemory;
+    qw_queueMemoryWBRequest;
+    k_popIncomingResponseQueue;
+  }
+
+  transition(M_DRDI, Memory_Ack_Local, I) {
+    aa_sendAck;
+    c_clearOwner;
+    l_popMemQueue;
+    kd_wakeUpDependents;
+  }
+
+  transition(E, DMA_READ, E_DRD) {
+    inv_sendCacheInvalidate;
+    j_popIncomingRequestQueue;
+  }
+
+  transition(E_DRD, WB_Ack_Local, E_DRDI) {
+    drp_sendDMAData;
+    m_writeDataToMemory;
+    qw_queueMemoryWBRequest;
+    k_popIncomingResponseQueue;
+  }
+
+  transition(E_DRDI, Memory_Ack_Local, I) {
+    aa_sendAck;
+    c_clearOwner;
+    l_popMemQueue;
+    kd_wakeUpDependents;
   }
 
 }
