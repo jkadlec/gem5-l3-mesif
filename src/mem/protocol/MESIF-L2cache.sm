@@ -1417,4 +1417,8 @@ transition({IX, SS_X, S}, Ack){
 o_popResponseQueue;
 }
 
+transition(EX, Ack) {
+o_popResponseQueue;
+}
+
 }

@@ -810,7 +810,7 @@ machine(L1Cache, "MESIF Directory L1 Cache Multicore")
 //  }
 
   // Transitions from IM
-  transition({SM}, Inv, IM) { //TODO used to be invack
+  transition({SM}, Inv, IM_I) { //TODO used to be invack
     fi_sendInvAck;
     l_popRequestQueue;
   }

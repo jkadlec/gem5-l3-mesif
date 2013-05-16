@@ -77,6 +77,7 @@ machine(L3Cache, "MESIF Directory L3 Cache CMP")
     SS_MBU_M, AccessPermission:Busy, desc="Blocked for L2_GETX from SS";
     MT_MB, AccessPermission:Busy, desc="Blocked for L2_GETX from MT"; //Blocks when already in L2, another L2 wants the value
     MT_M, AccessPermission:Busy, desc="Blocked for L2_GETX from MT"; //Blocks when already in L2, another L2 wants the value
+    MT_MM, AccessPermission:Busy, desc="Blocked for L2_GETX from MT"; //Blocks when already in L2, another L2 wants the value
     M_MB, AccessPermission:Busy, desc="Blocked for L2_GETX from M";
 
     MT_IIB, AccessPermission:Busy, desc="Blocked for L2_GETS from MT, waiting for unblock and data";
@@ -1069,12 +1070,20 @@ d_sendDataToRequestor;
     jj_popL2RequestQueue;
   }
 
-  transition(MT_M, Exclusive_Unblock) {
-zz_stallAndWaitUnblockQueue;
+  transition(MT_M, Exclusive_Unblock, MT_MM) {
+    mmu_markExclusiveFromUnblock;
+    fwm_sendFwdInvToSharersMinusExclusive;
+k_popUnblockQueue;
 }
 
   transition(MT_M, Mem_Ack, MT_MB) {
     fwm_sendFwdInvToSharersMinusExclusive;
+s_deallocateTBE;
+kd_wakeUpDependents;
+    o_popIncomingResponseQueue;
+  }
+
+ transition(MT_MM, Mem_Ack, MT) {
 s_deallocateTBE;
 kd_wakeUpDependents;
     o_popIncomingResponseQueue;
