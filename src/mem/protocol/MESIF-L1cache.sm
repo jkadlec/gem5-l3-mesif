@@ -821,6 +821,8 @@ machine(L1Cache, "MESIF Directory L1 Cache Multicore")
 //    z_stallAndWaitRequestQueue;
   }
 
+  
+
   transition(IM_I, Inv) {
 l_popRequestQueue;
   }

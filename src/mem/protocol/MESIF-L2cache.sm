@@ -1421,4 +1421,12 @@ transition(EX, Ack) {
 o_popResponseQueue;
 }
 
+transition(I, L1_UPGRADE, IX) { // this look like inclusivity is broken, but it can only happen in one special case ()
+gx_issueGETX;
+    oo_allocateL2CacheBlock; // do i need this here, or on hit?
+    i_allocateTBE;
+    uu_profileDataMiss;
+    l_popRequestQueue;
+}
+
 }
