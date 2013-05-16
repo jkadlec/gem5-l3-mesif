@@ -865,12 +865,6 @@ machine(L3Cache, "MESIF Directory L3 Cache CMP")
     }
   }
 
-  action(ww_profileMissNoDir, "\w", desc="Profile this transition at the L3 because Dir won't see the request") {
-    peek(L2RequestIntraChipL3Network_in, RequestMsg) {
-      // profile_request(in_msg.L2CacheStateStr, getStateStr(address), "NA", getCoherenceRequestTypeStr(in_msg.Type));
-    }
-  }
-
   action(nn_addSharer, "\n", desc="Add L2 sharer to list") {
     peek(L2RequestIntraChipL3Network_in, RequestMsg) {
       assert(is_valid(cache_entry));
