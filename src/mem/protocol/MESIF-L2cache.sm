@@ -1104,12 +1104,14 @@ kd_wakeUpDependents;
     writeDataToTBEFromRequest;
     a_relayRequestToL3;
     t_sendWBAckFromRequest;
+kd_wakeUpDependents;
     l_popRequestQueue;
   }
 
-  transition(EX_IWB_SELF, {Fwd_GETX}) { // cannot send until writeback arrives!
+  transition(EX_IWB_SELF, {Fwd_GETX}, EX_IWB_FWD) { // cannot send until writeback arrives!
 //     sendDataToImmediateRequestor_fromTBE;
 //     l_popRequestQueue;
+    it_TBEsetRequestor;
     stall_incoming_l1_requests
   }
 
@@ -1130,6 +1132,7 @@ s_deallocateTBE;
     u2_writeDataToTBEFromResponse;
 //    t_sendWBAckFromResponse;
     gt_issuePUTXfromTBE;
+kd_wakeUpDependents;
     o_popResponseQueue;
   }
 
@@ -1446,7 +1449,7 @@ stall_incoming_l1_requests;
 }
 
 transition(EX_IACK, Fwd_GETX) {
-	dt_sendDataToRequestor_fromTBE;
+    drt_sendDataToImmediateRequestor_fromTBE;
 	l_popRequestQueue;
 }
 
