@@ -50,6 +50,11 @@ int id,
   // STATES
   state_declaration(State, desc="Directory states", default="Directory_State_I") {
     // Base states
+    MH, AccessPermission:Read_Only, desc="";
+    EH, AccessPermission:Read_Only, desc="";
+    IH, AccessPermission:Read_Write, desc=""; //this has to be Read_Write, or else simulation fails
+    SH, AccessPermission:Read_Only, desc="";
+    FH, AccessPermission:Read_Only, desc="";
     M, AccessPermission:Read_Only, desc="";
     E, AccessPermission:Read_Only, desc="";
     I, AccessPermission:Read_Write, desc=""; //this has to be Read_Write, or else simulation fails
@@ -71,6 +76,7 @@ int id,
     IMS_M, AccessPermission:Busy, desc="";
     XI_M, AccessPermission:Busy, desc="";
     XI_H, AccessPermission:Busy, desc="";
+    SI_M, AccessPermission:Busy, desc="";
     IE_M, AccessPermission:Busy, desc="";
     IF_M, AccessPermission:Busy, desc="";
     IM_S, AccessPermission:Busy, desc="";
@@ -888,7 +894,7 @@ int id,
     j_popIncomingRequestQueue;
   }
 
-  transition(F, GETX_R_NO_SHARERS_F, M) {
+  transition(FH, GETX_R_NO_SHARERS_F, MH) {
      efh_forwarderIsHome;
      e_ownerIsRequestor;
      a_sendAckFromReq;
@@ -902,14 +908,14 @@ int id,
     j_popIncomingRequestQueue;
   }
 
-  transition(IMS_M, Memory_Data, M) {
+  transition(IMS_M, Memory_Data, MH) {
     do_sendDataToOwner;
     dos_saveDataFromMemory;
     l_popMemQueue;
     kd_wakeUpDependents;
   }
 
-  transition(IM_M, Memory_Data, M) {
+  transition(IM_M, Memory_Data, MH) {
     d_sendData;
     dos_saveDataFromMemory;
     l_popMemQueue;
@@ -922,19 +928,19 @@ int id,
     j_popIncomingRequestQueue;
   }
 
-  transition(E, GETX_H, M) {
+  transition(EH, GETX_H, MH) {
     a_sendAckFromReq;
     j_popIncomingRequestQueue;
   }
 
-  transition(IE_M, Memory_Data, E) {
+  transition(IE_M, Memory_Data, EH) {
     d_sendData;
     dos_saveDataFromMemory;
     l_popMemQueue;
     kd_wakeUpDependents;
   }
 
-  transition(IF_M, Memory_Data, F) {
+  transition(IF_M, Memory_Data, FH) {
     d_sendData;
     dos_saveDataFromMemory;
     l_popMemQueue;
@@ -953,7 +959,7 @@ int id,
     k_popIncomingResponseQueue;
   }
 
-  transition(M, {WB_Data_Local, WB_Data_CA}, XI_M) {
+  transition({M, MH}, {WB_Data_Local, WB_Data_CA}, XI_M) {
     m_writeDataToMemory;
     qw_queueMemoryWBRequest;
     k_popIncomingResponseQueue;
@@ -1002,7 +1008,7 @@ int id,
     k_popIncomingResponseQueue;
   }
 
-  transition(M, GETX_H) {
+  transition({M, MH}, GETX_H) {
     a_sendAckFromReq;
     j_popIncomingRequestQueue;
   }
@@ -1015,19 +1021,19 @@ int id,
         k_popIncomingResponseQueue;
   }
 
-  transition(M, WB_Ack_Local, I) {
+  transition(MH, WB_Ack_Local, I) {
 	c_clearOwner;
 	a_sendAck;
 	k_popIncomingResponseQueue;
   }
 
-  transition(E, WB_Ack_Local, I) {
+  transition(EH, WB_Ack_Local, I) {
 	c_clearOwner;
 	a_sendAck;
 	k_popIncomingResponseQueue;
   }
 
-  transition(F, WB_Ack_Local, F) {
+  transition(FH, WB_Ack_Local, IF_M) {
 //	conditionalDeforwardify;
 	a_sendAck;
 //	w_deallocateTBE;
@@ -1046,7 +1052,7 @@ int id,
 //	k_popIncomingResponseQueue;
 //  }
 
-  transition(E, WB_Data_Local, XI_M) {
+  transition(EH, WB_Data_Local, XI_M) {
     m_writeDataToMemory;
     qw_queueMemoryWBRequest;
     k_popIncomingResponseQueue;
@@ -1088,7 +1094,7 @@ int id,
     kd_wakeUpDependents;
   }
 
-  transition(E, DMA_WRITE, E_DWR) {
+  transition(EH, DMA_WRITE, E_DWR) {
     v_allocateTBE;
     inv_sendCacheInvalidate;
     j_popIncomingRequestQueue;
@@ -1110,7 +1116,7 @@ int id,
     kd_wakeUpDependents;
   }
 
-  transition(M, DMA_WRITE, M_DWR) {
+  transition(MH, DMA_WRITE, M_DWR) {
     v_allocateTBE;
     inv_sendCacheInvalidate;
     j_popIncomingRequestQueue;
@@ -1132,7 +1138,7 @@ int id,
     kd_wakeUpDependents;
   }
 
-  transition(M, DMA_READ, M_DRD) {
+  transition(MH, DMA_READ, M_DRD) {
     inv_sendCacheInvalidate;
     j_popIncomingRequestQueue;
   }
@@ -1151,7 +1157,7 @@ int id,
     kd_wakeUpDependents;
   }
 
-  transition(E, DMA_READ, E_DRD) {
+  transition(EH, DMA_READ, E_DRD) {
     inv_sendCacheInvalidate;
     j_popIncomingRequestQueue;
   }

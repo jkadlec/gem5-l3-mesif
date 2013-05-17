@@ -607,7 +607,7 @@ machine(L1Cache, "MESIF Directory L1 Cache Multicore")
   //*****************************************************
 
   // Transitions for Load/Store/Replacement/WriteBack from transient states
-  transition({IS, IM, IS_I, M_I, SM}, {Load, Ifetch, Store, L1_Replacement}) {
+  transition({IS, IM, IS_I, M_I, SM, IM_I}, {Load, Ifetch, Store, L1_Replacement}) {
     // We cannot proceed
     z_stallAndWaitMandatoryQueue;
   }

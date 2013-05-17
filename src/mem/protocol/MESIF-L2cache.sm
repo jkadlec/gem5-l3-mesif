@@ -306,7 +306,7 @@ machine(L2Cache, "MESIF Directory L2 Cache Multicore")
                                                 in_msg.Requestor, cache_entry),
                   in_msg.Address, cache_entry, tbe);
         } else {
-          if (L2cacheMemory.cacheAvail(in_msg.Address)) {
+          if (L2cacheMemory.cacheAvail(in_msg.Address) || in_msg.Type == CoherenceRequestType:PUTX) {
           DPRINTF(RubySlicc, "We have space in L2 in state %s,no need to replace for %s\n", getState(tbe, cache_entry, in_msg.Address), in_msg.Address);
             // L2 does't have the line, but we have space for it in the L2
             trigger(L1Cache_request_type_to_event(in_msg.Type, in_msg.Address,
@@ -736,10 +736,25 @@ enqueue(requestIntraChipL2Network_out, RequestMsg, latency=l2_response_latency) 
     wakeUpBuffers(address);
   }
 
+  GenericRequestType convertToGenericType(CoherenceRequestType type) {
+    if(type == CoherenceRequestType:GETS) {
+      return GenericRequestType:GETS;
+    } else if(type == CoherenceRequestType:GETX) {
+      return GenericRequestType:GETX;
+    } else if(type == CoherenceRequestType:GET_INSTR) {
+      return GenericRequestType:GET_INSTR;
+    } else if(type == CoherenceRequestType:UPGRADE) {
+      return GenericRequestType:UPGRADE;
+    } else {
+      DPRINTF(RubySlicc, "%s\n", type);
+      error("Invalid CoherenceRequestType\n");
+    }
+  }
+
   action(uu_profileDataMiss, "\ud", desc="Profile the demand miss") {
     peek(requestIntraChipL2Network_in, RequestMsg) {
-//      L2cacheMemory.profileGenericRequest(convertToGenericType(in_msg.Type),
-//                                       in_msg.AccessMode, in_msg.Prefetch);
+      L2cacheMemory.profileGenericRequest(convertToGenericType(in_msg.Type),
+                                       in_msg.AccessMode, in_msg.Prefetch);
     }
   }
 
@@ -875,6 +890,23 @@ peek(requestIntraChipL2Network_in, RequestMsg) {
     }
 }
 
+  action(dt_sendDataToRequestor_fromTBE, "dt", desc="send data to requestor") {
+    peek(requestIntraChipL2Network_in, RequestMsg) {
+      enqueue(responseIntraChipL2Network_out, ResponseMsg) {
+        assert(is_valid(tbe));
+        out_msg.Address := address;
+        out_msg.Type := CoherenceResponseType:DATA;
+        out_msg.DataBlk := tbe.DataBlk;
+        out_msg.Dirty := tbe.Dirty;
+        out_msg.Sender := machineID;
+        out_msg.Destination.add(in_msg.Requestor);
+        out_msg.MessageSize := MessageSizeType:Response_Data;
+      }
+    }
+  }
+
+
+
   //*****************************************************
   // TRANSITIONS
   //*****************************************************
@@ -972,7 +1004,7 @@ stall_incoming_l1_requests;
 kd_wakeUpDependents;
   }
 
-  transition(SS_I, Inv, SS_I_INV) { // Already invalidating
+  transition(SS_I, {Inv, L2_Inv}, SS_I_INV) { // Already invalidating
 it_TBEsetRequestor;
     l_popRequestQueue;
   }
@@ -1273,7 +1305,7 @@ ff_deallocateL2CacheBlock;
     stall_incoming_l1_requests;
   }
 
-  transition(EX_IWB_FWD, Ack) {
+  transition({EX_IWB_FWD, EX_IWB_SELF, EX_IWB}, Ack) {
      o_popResponseQueue;
   }
 
@@ -1297,7 +1329,7 @@ o_popResponseQueue;
 	o_popResponseQueue;
   }
 
-  transition(IS_I, Data_L3_All, I) { //L1 will satisfy the read and drop immediately
+  transition(IS_I, {Data_L2_all_Acks, Data_L3_All}, I) { //L1 will satisfy the read and drop immediately
 ar_relayResponseToL1;
 s_deallocateTBE;
 o_popResponseQueue;
@@ -1411,6 +1443,11 @@ o_popResponseQueue;
 
 transition(EX_WB, {Fwd_GET_INSTR, Fwd_GETS, Fwd_GETX}) {
 stall_incoming_l1_requests;
+}
+
+transition(EX_IACK, Fwd_GETX) {
+	dt_sendDataToRequestor_fromTBE;
+	l_popRequestQueue;
 }
 
 transition({IX, SS_X, S}, Ack){
