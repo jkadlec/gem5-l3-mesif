@@ -32,7 +32,7 @@
  */
 
 
-machine(Directory, "MESIF Caching Agent + Home Agent controller") 
+machine(Directory, "MESIF Caching Agent + Home Agent") 
  : DirectoryMemory * directory,
    MemoryControl * memBuffer,
    int to_mem_ctrl_latency = 1,
