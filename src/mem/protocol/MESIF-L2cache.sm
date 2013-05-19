@@ -60,16 +60,12 @@ machine(L2Cache, "MESIF L2 Cache")
     IX, AccessPermission:Busy, desc="L2 idle, issued GETX relay, have not seen response yet";
     SS_I, AccessPermission:Busy, desc="L2 replacing, waiting for InvAck from L1";
     SS_I_INV, AccessPermission:Busy, desc="L2 replacing, waiting for InvAck from L1";
-    SS_II, AccessPermission:Busy, desc="L2 invalidated, waiting for InvAck from L1";
     EX_IWB, AccessPermission:Busy, desc="L2 invalidated, waiting for WB Data from L1";
     EX_IWB_SELF, AccessPermission:Busy, desc="L2 replacing, waiting for WB Data from L1";
     EX_IWB_SELF_FWD, AccessPermission:Busy, desc="L2 replacing, waiting for WB Data from L1";
-    EX_I_FWD, AccessPermission:Busy, desc="L2 replacing, waiting for WB Data from L1";
-    EX_IWB_SELF_NO_PUTX, AccessPermission:Busy, desc="L2 replacing, waiting for WB Data from L1";
     EX_IWB_FWD, AccessPermission:Busy, desc="L2 forwarding, waiting for WB Data from L1";
     EX_IWB_S_FWD, AccessPermission:Busy, desc="L2 forwarding, waiting for WB Data from L1";
     EX_IACK, AccessPermission:Busy, desc="L2 replacing, waiting for WB Ack from L3";
-    EX_IACK_NO_PUTX, AccessPermission:Busy, desc="L2 replacing, waiting for WB Ack from L3";
     SS_X, AccessPermission:Read_Only, desc="L1 induced S->M upgrade";
   }
 
@@ -87,10 +83,9 @@ machine(L2Cache, "MESIF L2 Cache")
 
     WB_Data,  desc="data from L1";
     WB_Data_clean,  desc="clean data from L1";
-    Ack,      desc="writeback ack";
-    Ack_L3,      desc="writeback ack";
-    Ack_L3_all,      desc="writeback ack";
-    InvAck,      desc="Inv ack";
+    Ack,      desc="invalidation ack";
+    L3_Ack,      desc="writeback ack";
+    L3_Ack_all,      desc="writeback ack";
 
     // internal generated request ??
     L2_Replacement,  desc="L2 Replacement", format="!r";
@@ -291,7 +286,7 @@ machine(L2Cache, "MESIF L2 Cache")
                                                 in_msg.Requestor, cache_entry),
                   in_msg.Address, cache_entry, tbe);
         } else {
-          if (L2cacheMemory.cacheAvail(in_msg.Address) || in_msg.Type == CoherenceRequestType:PUTX) {
+          if (L2cacheMemory.cacheAvail(in_msg.Address) || in_msg.Type == CoherenceRequestType:PUTX) { //!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
           DPRINTF(RubySlicc, "We have space in L2 in state %s,no need to replace for %s\n", getState(tbe, cache_entry, in_msg.Address), in_msg.Address);
             // L2 does't have the line, but we have space for it in the L2
             trigger(L1Cache_request_type_to_event(in_msg.Type, in_msg.Address,
@@ -365,9 +360,9 @@ machine(L2Cache, "MESIF L2 Cache")
         		trigger(Event:WB_Ack, in_msg.Address, cache_entry, tbe);
 	        } else if (in_msg.Type == CoherenceResponseType:ACK) {
 			if (getPendingAcks(tbe) - in_msg.AckCount == 0) {
-	        		trigger(Event:Ack_L3_all, in_msg.Address, cache_entry, tbe);
+	        		trigger(Event:L3_Ack_all, in_msg.Address, cache_entry, tbe);
 			} else {
-	        		trigger(Event:Ack_L3, in_msg.Address, cache_entry, tbe);
+	        		trigger(Event:L3_Ack, in_msg.Address, cache_entry, tbe);
 			}
 		} else {
 			DPRINTF(RubySlicc, "%s\n", in_msg);
@@ -931,7 +926,7 @@ l_popRequestQueue;
     l_popRequestQueue;
   }
 
-  transition({IX, SS_X}, {L2_Ack_all, Ack_L3_all}, EX) {
+  transition({IX, SS_X}, {L2_Ack_all, L3_Ack_all}, EX) {
 	dre_sendExclusiveDataToL1;
 	o_popResponseQueue;
      s_deallocateTBE;
@@ -939,7 +934,7 @@ l_popRequestQueue;
 	kd_wakeUpDependents;
   }
 
-  transition(SS_X, Ack_L3, SS_X) {
+  transition(SS_X, L3_Ack, SS_X) {
     q_updateAckCount;
     o_popResponseQueue;
   }
@@ -1037,10 +1032,6 @@ o_popResponseQueue;
     fii_sendInvToL1;
   }
 
-  transition(EX_IWB_S_FWD, {L2_Replacement}) {
-zz_stall_incoming_l1_requests;
-}	
-
   transition(EX, Inv, EX_IWB) { // L2 eviction from L3, cannot send data to L3 until L1 writebacks
     l_popRequestQueue;
     i_allocateTBE;
@@ -1083,10 +1074,6 @@ it_TBEsetRequestor;
 l_popRequestQueue;
   }
 
-  transition({EX_IACK, EX_IACK_NO_PUTX}, Ack) { // Lost a race with L1, PUTX issued by L1, but Inv got the L1 anyway and now it sends an Ack
-    o_popResponseQueue;
-  }
-
   transition(EX_IWB, {WB_Data, WB_Data_clean}, I) { // Writeback data from L1 after Invalidation, waiting for L3 Inv Ack, L1 does not want a WB_ACK
 //    t_sendWBAckFromResponse;
     u2_writeDataToTBEFromResponse;
@@ -1104,39 +1091,17 @@ kd_wakeUpDependents;
     o_popResponseQueue;
   }
 
-  transition(EX_IWB_SELF_FWD, {WB_Data, WB_Data_clean}, EX_I_FWD) {
+  transition(EX_IWB_SELF_FWD, {WB_Data, WB_Data_clean}, I) {
     u2_writeDataToTBEFromResponse;
 drt_sendDataToRequestor_fromTBE;
 kd_wakeUpDependents;
+s_deallocateTBE;
     o_popResponseQueue;
   }
 
-  transition(EX_IWB_SELF_FWD, L1_PUTX, EX_I_FWD) {
+  transition(EX_IWB_SELF_FWD, L1_PUTX, I) {
 	u3_writeDataToTBEFromRequest;
 drt_sendDataToRequestor_fromTBE;
-kd_wakeUpDependents;
-    l_popRequestQueue;
-  }
-
-  transition(EX_I_FWD, Fwd_GETX, I) {
-drt_sendDataToImmediateRequestor_fromTBE;
-l_popRequestQueue;
-  }
-
-  transition(EX_IWB_SELF_NO_PUTX, {WB_Data, WB_Data_clean}, I) {
-    u2_writeDataToTBEFromResponse;
-    wbt_sendWBDataToL3FromTBE;
-    t_sendWBAckFromResponse;
-s_deallocateTBE;
-kd_wakeUpDependents;
-    o_popResponseQueue;
-  }
-
-  transition(EX_IWB_SELF_NO_PUTX, L1_PUTX, I) {
-    u3_writeDataToTBEFromRequest;
-    wbt_sendWBDataToL3FromTBE;
-    t_sendWBAckFromRequest;
-s_deallocateTBE;
 kd_wakeUpDependents;
     l_popRequestQueue;
   }
@@ -1150,7 +1115,7 @@ kd_wakeUpDependents;
     l_popRequestQueue;
   }
 
-  transition({EX_IACK, EX_IACK_NO_PUTX}, WB_Ack, I) { // Ack from L3 arrived, can go to starting state
+  transition({EX_IACK}, WB_Ack, I) { // Ack from L3 arrived, can go to starting state
     o_popResponseQueue;
     s_deallocateTBE;
     kd_wakeUpDependents;
@@ -1172,6 +1137,10 @@ kd_wakeUpDependents;
     zz_stall_incoming_l1_requests;
   }
 
+  transition(IX, WB_Ack) {
+	o_popResponseQueue;
+  }
+
   transition(ES, Inv, I) { // Cannot be silent, value potentially stale
     f_sendDataToL3;
     ff_deallocateL2CacheBlock;
@@ -1191,11 +1160,11 @@ l_popRequestQueue;
     o_popResponseQueue;
   }
 
-  transition({EX_IACK, EX_IACK_NO_PUTX}, {L1_GETX, L1_GETS, L1_GET_INSTR}) { // L1 wants previously removed value, we have to stall until L3 writeback is done
+  transition({EX_IACK}, {L1_GETX, L1_GETS, L1_GET_INSTR}) { // L1 wants previously removed value, we have to stall until L3 writeback is done
     zz_stall_incoming_l1_requests;
   }
 
-  transition({I, EX_IACK, EX_IACK_NO_PUTX}, L1_PUTX) { // Hmm, we've already got WB_IACK, we can drop this. TRIPLE CHECK THIS!
+  transition({I, EX_IACK}, L1_PUTX) { // Hmm, we've already got WB_IACK, we can drop this. TRIPLE CHECK THIS!
 //    printaddinforeq;
     l_popRequestQueue;
   }
@@ -1204,7 +1173,7 @@ l_popRequestQueue;
     o_popResponseQueue;
   }
 
-  transition({EX_IACK, EX_IACK_NO_PUTX}, {WB_Data, WB_Data_clean}) { // same as above
+  transition({EX_IACK}, {WB_Data, WB_Data_clean}) { // same as above
 //    printaddinfo;
     o_popResponseQueue;
   }
@@ -1228,11 +1197,6 @@ kd_wakeUpDependents;
 zz_stall_incoming_l1_requests;
   }
 
-  transition(SS_II, Ack, I) { // L1 copy invalidated, we can go to invalid
-    s_deallocateTBE;
-    o_popResponseQueue;
-  }
-
   transition(SS_I, {L1_GETX, L1_GETS, L1_GET_INSTR}) {
 zz_stall_incoming_l1_requests;
 }
@@ -1247,7 +1211,7 @@ zz_stall_incoming_l1_requests;
     l_popRequestQueue;
   }
 
-  transition(EX, L1_GETX) { //L1 *had* to send writeback, we have to wait
+  transition(EX, {L1_GETX, L1_GETS, L1_GET_INSTR}) { //L1 *had* to send writeback, we have to wait
 	zz_stall_incoming_l1_requests;
   }
 
@@ -1257,9 +1221,9 @@ zz_stall_incoming_l1_requests;
     l_popRequestQueue;
   }
 
-  transition(EX_IWB_SELF, {Fwd_GETS, Fwd_GET_INSTR}, EX_IWB_S_FWD) {
+  transition(EX_IWB_SELF, {Fwd_GETS, Fwd_GET_INSTR}, EX_IWB_SELF_FWD) {
 it_TBEsetRequestor;
-zz_stall_incoming_l1_requests;
+l_popRequestQueue;
   }
 
   transition(ES, Fwd_GETX, I) {
@@ -1284,7 +1248,7 @@ ff_deallocateL2CacheBlock;
      kd_wakeUpDependents;
   } 
 
-  transition({EX_IWB}, {L1_GETX}) {
+  transition({EX_IWB}, {L1_GETX, L1_GETS, L1_GET_INSTR}) {
 zz_stall_incoming_l1_requests;
   }
 
@@ -1312,9 +1276,17 @@ o_popResponseQueue;
 	o_popResponseQueue;
   }
 
-  transition(IS_I, {Data_L2_all_Acks, Data_L3_All}, I) { //L1 will satisfy the read and drop immediately
+  transition(IS_I, {Data_L3_All}, I) { //L1 will satisfy the read and drop immediately
 ar_relayResponseToL1;
 s_deallocateTBE;
+o_popResponseQueue;
+kd_wakeUpDependents;
+  }
+
+  transition(IS_I, Data_L2_all_Acks, I) {
+ar_relayResponseToL1;
+s_deallocateTBE;
+j_sendUnblock;
 o_popResponseQueue;
 kd_wakeUpDependents;
   }
@@ -1337,28 +1309,29 @@ o_popResponseQueue;
   transition({EX}, {Fwd_GETS, Fwd_GET_INSTR}, EX_IWB_S_FWD) {
     i_allocateTBE;
     it_TBEsetRequestor;
+	ff_deallocateL2CacheBlock;
     fii_sendInvToL1;
     l_popRequestQueue;
   }
 
-  transition(EX_IWB_S_FWD, {WB_Data_clean, WB_Data}, S) { //TODO: no need to evict, downgrade is enough
-    u1_writeDataToL2CacheFromResponse;
+  transition(EX_IWB_S_FWD, {WB_Data_clean, WB_Data}, I) { //TODO: no need to evict, downgrade is enough
+//    u1_writeDataToL2CacheFromResponse;
     u2_writeDataToTBEFromResponse;
     drt_sendDataToRequestor_fromTBE;
 //send valid data to L3
-    d2_sendDataToL3;
+    wbt_sendWBDataToL3FromTBE;
     s_deallocateTBE;
     o_popResponseQueue;
 kd_wakeUpDependents;
   }
 
-
-  transition(EX_IWB_S_FWD, {L1_PUTX}, S) {
-writeDataToCacheFromRequest;
+  transition(EX_IWB_S_FWD, {L1_PUTX}, I) {
+//writeDataToCacheFromRequest;
     u3_writeDataToTBEFromRequest;
 t_sendWBAckFromRequest;
     drt_sendDataToRequestor_fromTBE;
-    d2_sendDataToL3;
+//    d2_sendDataToL3;
+wbt_sendWBDataToL3FromTBE
     s_deallocateTBE;
     l_popRequestQueue;
 kd_wakeUpDependents;
@@ -1373,11 +1346,11 @@ kd_wakeUpDependents;
     j_sendUnblock;
   }
 
-  transition(SS_X, L2_Replacement) {
+  transition({SS_X, EX_IWB_SELF, EX_IWB_SELF_FWD, EX_IWB_FWD}, {L2_Replacement, L1_GETX, L1_GETS, L1_GET_INSTR}) {
 	zz_stall_incoming_l1_requests;
   }
 
-  transition({IS, IX}, Ack_L3) {
+  transition({IS, IX}, L3_Ack) {
         q_updateAckCount;
 	o_popResponseQueue;
   }
@@ -1432,6 +1405,10 @@ o_popResponseQueue;
 }
 
 transition(EX, Ack) {
+o_popResponseQueue;
+}
+
+transition(EX_IACK, Ack) {
 o_popResponseQueue;
 }
 

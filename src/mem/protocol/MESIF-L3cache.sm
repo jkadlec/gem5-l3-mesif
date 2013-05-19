@@ -70,15 +70,11 @@ machine(L3Cache, "MESIF L3 Cache")
     ISS, AccessPermission:Busy, desc="L3 idle, got single L2_GETS, issued memory fetch, have not seen response yet";
     IS, AccessPermission:Busy, desc="L3 idle, got L2_GET_INSTR or multiple L2_GETS, issued memory fetch, have not seen response yet";
     IM, AccessPermission:Busy, desc="L3 idle, got L2_GETX, issued memory fetch, have not seen response(s) yet";
+    MT_M, AccessPermission:Busy, desc="Blocked for L2_GETX from MT"; //Blocks when already in L2, another L2 wants the value
 
     // Blocking states
-    SS_MB, AccessPermission:Busy, desc="Blocked for L2_GETX from SS";
-    SS_MB_M, AccessPermission:Busy, desc="Blocked for L2_GETX from SS";
-    SS_MBU_M, AccessPermission:Busy, desc="Blocked for L2_GETX from SS";
     MT_MB, AccessPermission:Busy, desc="Blocked for L2_GETX from MT"; //Blocks when already in L2, another L2 wants the value
-    MT_M, AccessPermission:Busy, desc="Blocked for L2_GETX from MT"; //Blocks when already in L2, another L2 wants the value
     MT_MM, AccessPermission:Busy, desc="Blocked for L2_GETX from MT"; //Blocks when already in L2, another L2 wants the value
-    M_MB, AccessPermission:Busy, desc="Blocked for L2_GETX from M";
 
     MT_IIB, AccessPermission:Busy, desc="Blocked for L2_GETS from MT, waiting for unblock and data";
     MT_IB, AccessPermission:Busy, desc="Blocked for L2_GETS from MT, got unblock, waiting for data";
@@ -903,7 +899,7 @@ machine(L3Cache, "MESIF L3 Cache")
     wakeUpBuffers(address);
   }
 
-  action(printBlockInfo, "omG", desc="dsaf") {
+  action(pb_printBlockInfo, "pb", desc="dsaf") {
     DPRINTF(RubySlicc, "cache entry sharers: %s\n", cache_entry.Sharers);
   }
 
@@ -916,7 +912,7 @@ machine(L3Cache, "MESIF L3 Cache")
   // BASE STATE - I
 
   // Transitions from I (Idle)
-  transition({NP, IS, ISS, IM, SS, M, M_I, I_I, S_I, M_MB, MT_IB, MT_SB}, L2_PUTX) { //todo asi taky ne (MT_M)
+  transition({NP, IS, ISS, IM, SS, M, M_I, I_I, S_I, MT_IB, MT_SB}, L2_PUTX) { //todo asi taky ne (MT_M)
     t_sendWBAck;    
     jj_popL2RequestQueue;
   }
@@ -926,16 +922,16 @@ machine(L3Cache, "MESIF L3 Cache")
 	zz_stallAndWaitL2RequestQueue;
 }
 
-  transition({NP, SS, M, MT, M_I, I_I, S_I, IS, ISS, IM, M_MB, MT_IB, MT_SB}, L2_PUTX_old) {
+  transition({NP, SS, M, MT, M_I, I_I, S_I, IS, ISS, IM, MT_IB, MT_SB}, L2_PUTX_old) {
     t_sendWBAck;    
     jj_popL2RequestQueue;
   }
 
-  transition({IM, IS, ISS, SS_MB, M_MB, MT_MB, MT_IIB, MT_IB, MT_SB, MT_M}, {L3_Replacement, L3_Replacement_clean}) { //TODO MT_M possible error (incoher)
+  transition({IM, IS, ISS, MT_IIB, MT_IB, MT_SB, MT_M, MT_MM}, {L3_Replacement, L3_Replacement_clean}) { //TODO MT_M possible error (incoher)
     zz_stallAndWaitL2RequestQueue;
   }
 
-  transition({IM, IS, ISS, SS_MB, M_MB, MT_MB, MT_IIB, MT_IB, MT_SB}, MEM_Inv) {         
+  transition({IM, IS, ISS, MT_MB, MT_IIB, MT_IB, MT_SB}, MEM_Inv) {         
     zn_recycleResponseNetwork;
   }
 
@@ -948,8 +944,8 @@ machine(L3Cache, "MESIF L3 Cache")
   }
 
 
-  transition({SS_MB, M_MB, MT_MB, MT_IIB, MT_IB, MT_SB, MT_MM}, {L2_GETS, L2_GET_INSTR, L2_GETX, L2_UPGRADE}) {
-    printBlockInfo;
+  transition({MT_MB, MT_IIB, MT_IB, MT_SB, MT_MM}, {L2_GETS, L2_GET_INSTR, L2_GETX, L2_UPGRADE}) {
+    pb_printBlockInfo;
     zz_stallAndWaitL2RequestQueue;
   }
 
@@ -1046,6 +1042,10 @@ d_sendDataToRequestor;
     jj_popL2RequestQueue;
   }
 
+  transition(MT_MM, L2_PUTX) {
+zz_stallAndWaitL2RequestQueue;
+  }
+
   transition(MT_M, Exclusive_Unblock, MT_MM) {
     mmu_markExclusiveFromUnblock;
     fwm_sendFwdInvToSharersMinusExclusive;
@@ -1065,12 +1065,14 @@ kd_wakeUpDependents;
     o_popIncomingResponseQueue;
   }
 
-//  transition(SS, L2_UPGRADE, SS_MBU_M) {
-//    set_setMRU;
-//	mm_markExclusive;
-//	a_issueGETX;
-//    jj_popL2RequestQueue;
-//  }
+//TODO these transition will not work, just for table
+
+  transition(SS, L2_UPGRADE, MT_M) {
+    set_setMRU;
+	mm_markExclusive;
+	a_issueGETX;
+    jj_popL2RequestQueue;
+  }
 
   transition(SS, L3_Replacement_clean, I_I) {
     i_allocateTBE;
@@ -1154,13 +1156,6 @@ kd_wakeUpDependents;
     jj_popL2RequestQueue;
   }
 
-
-  // transitions from blocking states
-  transition(SS_MB, Unblock_Cancel, SS) {
-    k_popUnblockQueue;
-    kd_wakeUpDependents;
-  }
-
   transition(MT_MB, Unblock_Cancel, MT) {
     k_popUnblockQueue;
     kd_wakeUpDependents;
@@ -1171,14 +1166,7 @@ kd_wakeUpDependents;
     kd_wakeUpDependents;
   }
 
-  transition(SS_MB, Exclusive_Unblock, MT) {
-    // update actual directory
-    mmu_markExclusiveFromUnblock;
-    k_popUnblockQueue;
-    kd_wakeUpDependents;
-  }
-
-  transition({M_MB, MT_MB}, Exclusive_Unblock, MT) {
+  transition({MT_MB}, Exclusive_Unblock, MT) {
     // update actual directory
     mmu_markExclusiveFromUnblock;
     k_popUnblockQueue;
@@ -1258,7 +1246,7 @@ kd_wakeUpDependents;
   }
 
   // possible race between unblock and immediate replacement
-  transition({MT_MB,SS_MB}, {L2_PUTX, L2_PUTX_old}) {
+  transition({MT_MB}, {L2_PUTX, L2_PUTX_old}) {
     zz_stallAndWaitL2RequestQueue;
   }
 

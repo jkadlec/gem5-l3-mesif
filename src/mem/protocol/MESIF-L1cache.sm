@@ -522,10 +522,6 @@ machine(L1Cache, "MESIF L1 Cache")
     stall_and_wait(mandatoryQueue_in, address);
   }
 
-  action(z_stallAndWaitRequestQueue, "\za", desc="recycle L1 request queue") {
-    stall_and_wait(requestIntraChipL1Network_in, address);
-  }
-
   action(kd_wakeUpDependents, "kd", desc="wake-up dependents") {
     wakeUpBuffers(address);
   }
@@ -720,7 +716,6 @@ machine(L1Cache, "MESIF L1 Cache")
   transition({IM}, Inv, IM_I) { //TODO used to be invack
     fi_sendInvAck;
     l_popRequestQueue;
-//    z_stallAndWaitRequestQueue;
   }
 
   transition(IM_I, Inv) {
