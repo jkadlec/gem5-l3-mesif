@@ -827,23 +827,6 @@ assert(false);
     }
   }
 
-  action(printaddinfo, "fdsadfa", desc="fasdfasdf") {
-	peek(responseIntraChipL2Network_in, ResponseMsg) {
-	assert(is_valid(tbe));
-	DPRINTF(RubySlicc, "%s %s", tbe.DataBlk, in_msg.DataBlk);
-	assert(tbe.DataBlk == in_msg.DataBlk);
-}
-  }
-
-  action(printaddinforeq, "fdsadfaachbozenanebesich", desc="fasdfasdf") {
-	if (is_valid(tbe)) {
-	peek(requestIntraChipL2Network_in, RequestMsg) {
-		DPRINTF(RubySlicc, "%s %s", tbe.DataBlk, in_msg.DataBlk);
-		assert(tbe.DataBlk == in_msg.DataBlk);
-        }
-}
-}
-
   action(gx_issueGETX, "gx", desc="send data to the L3 cache") {
 peek(requestIntraChipL2Network_in, RequestMsg) {
     enqueue(requestIntraChipL2Network_out, RequestMsg, latency=l2_response_latency) {
@@ -855,23 +838,6 @@ peek(requestIntraChipL2Network_in, RequestMsg) {
       }
     }
 }
-
-  action(dt_sendDataToRequestor_fromTBE, "dt", desc="send data to requestor") {
-    peek(requestIntraChipL2Network_in, RequestMsg) {
-      enqueue(responseIntraChipL2Network_out, ResponseMsg) {
-        assert(is_valid(tbe));
-        out_msg.Address := address;
-        out_msg.Type := CoherenceResponseType:DATA;
-        out_msg.DataBlk := tbe.DataBlk;
-        out_msg.Dirty := tbe.Dirty;
-        out_msg.Sender := machineID;
-        out_msg.Destination.add(in_msg.Requestor);
-        out_msg.MessageSize := MessageSizeType:Response_Data;
-      }
-    }
-  }
-
-
 
   //*****************************************************
   // TRANSITIONS
@@ -1165,7 +1131,6 @@ l_popRequestQueue;
   }
 
   transition({I, EX_IACK}, L1_PUTX) { // Hmm, we've already got WB_IACK, we can drop this. TRIPLE CHECK THIS!
-//    printaddinforeq;
     l_popRequestQueue;
   }
 
@@ -1174,7 +1139,6 @@ l_popRequestQueue;
   }
 
   transition({EX_IACK}, {WB_Data, WB_Data_clean}) { // same as above
-//    printaddinfo;
     o_popResponseQueue;
   }
 

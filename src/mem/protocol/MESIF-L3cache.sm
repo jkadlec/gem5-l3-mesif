@@ -547,24 +547,6 @@ machine(L3Cache, "MESIF L3 Cache")
     }
   }
 
-  action(ddd_sendDataToExclusive, "ddd", desc="Send data from cache to reqeustor") {
-      enqueue(responseIntraChipL3Network_out, ResponseMsg, latency=l3_response_latency) {
-        assert(is_valid(cache_entry));
-        out_msg.Address := address;
-        out_msg.Type := CoherenceResponseType:DATA;
-        out_msg.Sender := machineID;
-        out_msg.Destination.add(cache_entry.Exclusive);
-        out_msg.DataBlk := cache_entry.DataBlk;
-        out_msg.Dirty := cache_entry.Dirty;
-        out_msg.MessageSize := MessageSizeType:Response_Data;
-
-        out_msg.AckCount := 0 - cache_entry.Sharers.count();
-        if (cache_entry.Sharers.isElement(cache_entry.Exclusive)) {
-          out_msg.AckCount := out_msg.AckCount + 1;
-        }
-    }
-  }
-
   action(xy_assertNotSharer, "xy", desc="...") {
     peek(L2RequestIntraChipL3Network_in, RequestMsg) {
 	assert(isSharer(in_msg.Address, in_msg.Requestor, cache_entry) == false);
@@ -885,10 +867,6 @@ machine(L3Cache, "MESIF L3 Cache")
 
   action(zz_stallAndWaitL2RequestQueue, "zz", desc="recycle L2 request queue") {
     stall_and_wait(L2RequestIntraChipL3Network_in, address);
-  }
-
-  action(zz_stallAndWaitUnblockQueue, "zzbb", desc="recycle L2 request queue") {
-    stall_and_wait(L2unblockNetwork_in, address);
   }
 
   action(zn_recycleResponseNetwork, "zn", desc="recycle memory request") {
